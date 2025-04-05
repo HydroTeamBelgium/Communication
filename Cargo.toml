@@ -1,0 +1,27 @@
+[package]
+name = "basis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embassy-stm32 = {version = "0.2.0", features = ["defmt", "stm32h755zi-cm7"] }
+# features = ["defmt", "stm32h743bi", "time-driver-tim2", "exti", "memory-x", "unstable-pac", "chrono"] 
+embassy-executor = { version = "0.7.0", features = ["arch-cortex-m", "executor-thread", "defmt"] }
+embassy-time = "0.4.0"
+embassy-net = {version = "0.6.0", features = ["defmt", "proto-ipv4", "medium-ethernet", "udp", "dhcpv4"] }
+# ["defmt", "tcp", "dhcpv4", "medium-ethernet", "proto-ipv6", "dns"]
+
+heapless = "0.8"
+
+embedded-io-async = { version = "0.6.1" }
+rand_core = "0.6.3"
+static_cell = "2"
+
+
+defmt = "0.3.8"
+defmt-rtt = "0.4"
+
+cortex-m = "0.7.6"
+cortex-m-rt = "0.7.0"
+panic-probe = "0.3"
+
