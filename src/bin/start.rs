@@ -27,8 +27,6 @@ use embassy_stm32::{
     SharedData,
     peripherals::ETH,
     peripherals,
-    //Config,
-    gpio::{Level, Output, Speed}
 };
 
 //use embedded_io_async::Write;
@@ -62,6 +60,16 @@ type Device = Ethernet<'static, ETH, GenericSMI>;
 async fn net_task(mut runner: embassy_net::Runner<'static, Device>) -> ! {
     runner.run().await
 }
+
+
+// Creates ethernet frame: currently combines header and message content
+fn create_mssg_frame(dest_addr: [u8; 4], mssg_content: [u8; 4]) -> [u8; 8] {
+    let mut frame = [0u8; 8];
+    frame[..4].copy_from_slice(&dest_addr);
+    frame[4..].copy_from_slice(&mssg_content);
+    frame
+}
+
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -97,8 +105,6 @@ async fn main(spawner: Spawner) {
 
     // initialise the embassy STM32 library with the config and shared data
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
-    let mut red_led = Output::new(p.PB14, Level::High, Speed::Low);
-    let mut yellow_led = Output::new(p.PE1, Level::High, Speed::Low);
     info!("Hello World!");
 
     // Generate random seed. This is used to generate a random MAC address.
@@ -159,14 +165,10 @@ async fn main(spawner: Spawner) {
 
     //store the hardcoded IP's of the other devices
     let stm_1 = Ipv4Address::new(192, 168, 1, 100);  // needs to be changed to the hardcoded IP of the other stm32
-    let stm_2 = Ipv4Address::new(192, 168, 1, 101);
-    let stm_3 = Ipv4Address::new(192, 168, 1, 102);
+    // let stm_2 = Ipv4Address::new(192, 168, 1, 101);
+    // let stm_3 = Ipv4Address::new(192, 168, 1, 102);
 
     const COMMS_PORT: u16 = 12345;
-
-    let mut message_bytes = [0u8; 8];
-
-    message_bytes[..4].copy_from_slice(&stm_1.octets());
     
     loop {
         let mut udp_socket = UdpSocket::new(
@@ -182,11 +184,10 @@ async fn main(spawner: Spawner) {
                 loop {
                     info!("sending UDP packet");
 
-                    let message: u32 = 12345;
-                    message_bytes[4..].copy_from_slice(&message.to_be_bytes());
+                    let message: [u8; 4] = [0u8; 4];
 
                     udp_socket
-                        .send_to(&message_bytes, IpEndpoint::new(Ipv4(stm_1), COMMS_PORT))
+                        .send_to(&create_mssg_frame(stm_1.octets(), message), IpEndpoint::new(Ipv4(stm_1), COMMS_PORT))
                         .await
                         .unwrap();
                     
