@@ -7,7 +7,7 @@ MEMORY
 
 SECTIONS
 {
-    .ram_d3 :
+    .ram_d3 (NOLOAD):
     {
         *(.ram_d3.shared_data)
         *(.ram_d3)
