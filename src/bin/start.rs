@@ -29,6 +29,7 @@ use embassy_stm32::{
     peripherals,
 };
 
+use embassy_time::Timer;
 //use embedded_io_async::Write;
 use rand_core::RngCore;
 use static_cell::StaticCell;
@@ -170,37 +171,38 @@ async fn main(spawner: Spawner) {
 
     const COMMS_PORT: u16 = 12345;
     
-    loop {
-        let mut udp_socket = UdpSocket::new(
-            stack,
-            &mut rx_meta,
-            &mut rx_buffer,
-            &mut tx_meta,
-            &mut tx_buffer
-        );
-        match udp_socket.bind(0) {
-            Ok(_) => {
-                info!("UDP server ready!");
-                loop {
-                    info!("sending UDP packet");
+    let mut udp_socket = UdpSocket::new(
+        stack,
+        &mut rx_meta,
+        &mut rx_buffer,
+        &mut tx_meta,
+        &mut tx_buffer
+    );
+    match udp_socket.bind(0) {
+        Ok(_) => {
+            info!("UDP server ready!");
+            loop {
+                info!("sending UDP packet");
 
-                    let message: [u8; 4] = [0u8; 4];
+                let message: [u8; 4] = [0u8; 4];
 
-                    udp_socket
-                        .send_to(&create_mssg_frame(stm_1.octets(), message), IpEndpoint::new(Ipv4(stm_1), COMMS_PORT))
-                        .await
-                        .unwrap();
+                udp_socket
+                    .send_to(&create_mssg_frame(stm_1.octets(), message), IpEndpoint::new(Ipv4(stm_1), COMMS_PORT))
+                    .await
+                    .unwrap();
+                Timer::after_millis(1000).await;
                     
-                    if udp_socket.may_recv() {
-                        let (rx_size, from_addr) = udp_socket.recv_from(&mut msg_buffer).await.unwrap();
-                        let response = from_utf8(&msg_buffer[..rx_size]).unwrap();
-                        info!("Server replied with {} from {}", response, from_addr);
-                    }
+                if udp_socket.may_recv() {
+                    let (rx_size, from_addr) = udp_socket.recv_from(&mut msg_buffer).await.unwrap();
+                    let response = from_utf8(&msg_buffer[..rx_size]).unwrap();
+                    info!("Server replied with {} from {}", response, from_addr);
                 }
+                Timer::after_millis(1000).await;
             }
-            Err(err) => {
-                warn!("UDP bind error: {:?}", err);
-            }
-        };
-    }
+        }
+        Err(err) => {
+            warn!("UDP bind error: {:?}", err);
+        }
+    };
+    
 }
