@@ -1,5 +1,4 @@
-// initialise code without standard library, no main function
-// and use embassy executor to run the main function
+// basic test between 2 nucleo's. Turns on LED on both nucleos when button is pressed. 
 #![no_std]
 #![no_main]
 
@@ -168,7 +167,7 @@ async fn main(spawner: Spawner) {
     let mut buf = [0; 1]; // 1-byte messages
     let mut prev_button = false;
     let mut led_state = false;
-    
+
     loop {
         // Check button state with debouncing
         let pressed = button.is_high();

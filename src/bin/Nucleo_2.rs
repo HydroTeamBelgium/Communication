@@ -1,5 +1,5 @@
-// initialise code without standard library, no main function
-// and use embassy executor to run the main function
+// basic test between 2 nucleo's. Turns on LED on both nucleos when button is pressed. 
+
 #![no_std]
 #![no_main]
 

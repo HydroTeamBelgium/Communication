@@ -1,3 +1,5 @@
+# testcode for communication between laptop and STM32, For this to work, you need to have your wifi turned of, and change your ip Adress
+# works together wit STP_to_laptop_test
 import socket
 import struct
 import time
