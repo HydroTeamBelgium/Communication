@@ -99,12 +99,13 @@ async fn main(spawner: Spawner) {
 
     // Generate random seed. This is used to generate a random MAC address.
     let mut rng = Rng::new(p.RNG, Irqs);
-    let mut seed = [0; 8];
-    rng.fill_bytes(&mut seed);
-    let seed = u64::from_le_bytes(seed);
+    let mut mac_addr = [0u8; 6];
+    mac_addr[0] = 0x02; // Locally administered unicast MAC
+    rng.fill_bytes(&mut mac_addr[1..]);
+
 
     // Generate a random MAC address using the seed.
-    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+    // let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
 
     // Create a new ethernet device using the generated MAC address and the ethernet peripheral. Pinout is checked agianst the datasheet.
     static PACKETS: StaticCell<PacketQueue<4, 4>> = StaticCell::new();
@@ -128,12 +129,12 @@ async fn main(spawner: Spawner) {
     info!("Device created");
 
     // hard coded IP address for now (commented line underneath is for dynamic adress assignment)
-    //let config = embassy_net::Config::dhcpv4(Default::default());
-    let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: Ipv4Cidr::new(NUCLEO1_IP, 24),
-        dns_servers: Vec::new(),
-        gateway: Some(Ipv4Address::new(10, 42, 0, 1)),
-    });
+    let config = embassy_net::Config::dhcpv4(Default::default());
+    // let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+    //     address: Ipv4Cidr::new(NUCLEO1_IP, 24),
+    //     dns_servers: Vec::new(),
+    //     gateway: Some(Ipv4Address::new(10, 42, 0, 1)),
+    // });
 
     // Init network stack
     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
@@ -170,28 +171,31 @@ async fn main(spawner: Spawner) {
 
     loop {
         // Check button state with debouncing
-        let pressed = button.is_high();
-        if pressed && !prev_button {
-            // Toggle local LED
-            led_state = !led_state;
-            if led_state {
-                led1.set_high();
-                buf[0] = 1; // LED on command
-            } else {
-                led1.set_low();
-                buf[0] = 0; // LED off command
-            }
+        // let pressed = button.is_high();
+        // if pressed && !prev_button {
+        //     // Toggle local LED
+        //     led_state = !led_state;
+        //     if led_state {
+        //         led1.set_high();
+        //         buf[0] = 1; // LED on command
+        //     } else {
+        //         led1.set_low();
+        //         buf[0] = 0; // LED off command
+        //     }
             
-            // Send command to other Nucleo
-            match socket.send_to(&buf, (NUCLEO2_IP, PORT)).await {
-                Ok(_) => info!("Sent command: {}", buf[0]),
-                Err(e) => error!("Send failed: {:?}", e),
-            }
+        //     // Send command to other Nucleo
+        //     match socket.send_to(&buf, (NUCLEO2_IP, PORT)).await {
+        //         Ok(_) => info!("Sent command: {}", buf[0]),
+        //         Err(e) => error!("Send failed: {:?}", e),
+        //     }
             
-            // Simple debounce
-            Timer::after_millis(50).await;
-        }
-        prev_button = pressed;
+        //     // Simple debounce
+        //     Timer::after_millis(50).await;
+        // }
+        stack.wait_config_up().await;
+        info!("DHCP IP acquired: {}", stack.config_v4().unwrap().address);
+
+        // prev_button = pressed;
 
         // Check for incoming commands (non-blocking with timeout)
         match embassy_time::with_timeout(
