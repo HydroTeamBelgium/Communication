@@ -6,8 +6,10 @@ use core::mem::MaybeUninit;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
+use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::usb::{Driver, Instance};
 use embassy_stm32::{bind_interrupts, peripherals, usb, Config, SharedData};
+use embassy_time::Timer;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::driver::EndpointError;
 use embassy_usb::Builder;
@@ -29,7 +31,7 @@ async fn main(_spawner: Spawner) {
         use embassy_stm32::rcc::*;
         config.rcc.hsi = Some(HSIPrescaler::DIV1);
         config.rcc.csi = true;
-        config.rcc.hsi48 = Some(Hsi48Config { sync_from_usb: true }); // Required for USB FS
+        config.rcc.hsi48 = Some(Hsi48Config { sync_from_usb: true });
         config.rcc.pll1 = Some(Pll {
             source: PllSource::HSI,
             prediv: PllPreDiv::DIV4,
@@ -50,6 +52,11 @@ async fn main(_spawner: Spawner) {
     }
 
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
+
+    // LED assignments
+    let mut led_connect = Output::new(p.PB0, Level::Low, Speed::Low); // LD2 Blue
+    let mut led_recv = Output::new(p.PE1, Level::Low, Speed::Low);    // LD1 Green
+    let mut led_send = Output::new(p.PB14, Level::Low, Speed::Low);   // LD3 Red
 
     let mut ep_out_buffer = [0u8; 256];
     let mut usb_config = embassy_stm32::usb::Config::default();
@@ -80,12 +87,17 @@ async fn main(_spawner: Spawner) {
     let mut usb = builder.build();
 
     let usb_fut = usb.run();
+
     let echo_fut = async {
         loop {
             class.wait_connection().await;
             info!("USB connected!");
-            let _ = echo(&mut class).await;
+            led_connect.set_high(); // LD2 ON
+
+            let _ = echo(&mut class, &mut led_recv, &mut led_send).await;
+
             info!("USB disconnected!");
+            led_connect.set_low(); // LD2 OFF
         }
     };
 
@@ -103,12 +115,28 @@ impl From<EndpointError> for Disconnected {
     }
 }
 
-async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) -> Result<(), Disconnected> {
+async fn echo<'d, T: Instance + 'd>(
+    class: &mut CdcAcmClass<'d, Driver<'d, T>>,
+    led_recv: &mut Output<'_>,
+    led_send: &mut Output<'_>,
+) -> Result<(), Disconnected> {
     let mut buf = [0; 64];
+
     loop {
         let n = class.read_packet(&mut buf).await?;
         let data = &buf[..n];
-        info!("Received: {:x}", data);
+        info!("Received {:x}", data);
+
+        // Blink receive LED
+        led_recv.set_high();
+        Timer::after_millis(50).await;
+        led_recv.set_low(); 
+
         class.write_packet(data).await?;
+
+        // Blink send LED
+        led_send.set_high();
+        Timer::after_millis(50).await;
+        led_send.set_low();
     }
 }
