@@ -9,6 +9,8 @@ embassy-stm32 = {version = "0.2.0", features = ["defmt", "stm32h755zi-cm7", "tim
 embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
 embassy-time = "0.4.0"
 embassy-net = {version = "0.6.0", features = ["defmt", "proto-ipv4", "medium-ethernet", "udp", "dhcpv4"] }
+embassy-usb = "0.4.0"
+embassy-futures = "0.1.0"
 
 
 defmt = "0.3"
@@ -31,6 +33,7 @@ embedded-storage = "0.3.1"
 static_cell = "2"
 chrono = { version = "^0.4", default-features = false }
 grounded = "0.2.0"
+
 
 # cargo build/run
 [profile.dev]
