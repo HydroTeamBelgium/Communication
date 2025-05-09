@@ -99,15 +99,12 @@ async fn main(spawner: Spawner) {
 
     // Generate random seed. This is used to generate a random MAC address.
     let mut rng = Rng::new(p.RNG, Irqs);
-    let mut mac_addr = [0u8; 6];
     let mut seed = [0;8];
-    mac_addr[0] = 0x02; // Locally administered unicast MAC
     rng.fill_bytes(&mut mac_addr[1..]);
     let seed = u64::from_le_bytes(seed);
 
-
     // Generate a random MAC address using the seed.
-    // let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
 
     // Create a new ethernet device using the generated MAC address and the ethernet peripheral. Pinout is checked agianst the datasheet.
     static PACKETS: StaticCell<PacketQueue<4, 4>> = StaticCell::new();
@@ -130,13 +127,14 @@ async fn main(spawner: Spawner) {
 
     info!("Device created");
 
+
     // hard coded IP address for now (commented line underneath is for dynamic adress assignment)
     let config = embassy_net::Config::dhcpv4(Default::default());
-    // let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-    //     address: Ipv4Cidr::new(NUCLEO1_IP, 24),
-    //     dns_servers: Vec::new(),
-    //     gateway: Some(Ipv4Address::new(10, 42, 0, 1)),
-    // });
+    /* let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+         address: Ipv4Cidr::new(new_IP1, 28),
+         dns_servers: Vec::new(),
+         gateway: Some(Ipv4Address::new(10, 42, 0, 1)),
+     }); */
 
     // Init network stack
     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
@@ -145,9 +143,9 @@ async fn main(spawner: Spawner) {
     // Launch network task
     unwrap!(spawner.spawn(net_task(runner)));
 
-    // Ensure DHCP configuration is up before trying connect
     stack.wait_config_up().await;
     info!("Network initialized. IP: {}", stack.config_v4().unwrap().address);
+    
 
     // Then we can use it!
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
@@ -165,7 +163,7 @@ async fn main(spawner: Spawner) {
     );
 
     
-    let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(NUCLEO2_IP), 1234);  
+    let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(new_IP2), 1234);  
     socket.bind(PORT).unwrap();
     let mut buf = [0; 1]; // 1-byte messages
     let mut prev_button = false;
@@ -195,8 +193,6 @@ async fn main(spawner: Spawner) {
         //     // Simple debounce
         //     Timer::after_millis(50).await;
         // }
-        stack.wait_config_up().await;
-        info!("DHCP IP acquired: {}", stack.config_v4().unwrap().address);
 
         // prev_button = pressed;
 
