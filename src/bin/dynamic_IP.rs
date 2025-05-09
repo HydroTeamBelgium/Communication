@@ -100,8 +100,10 @@ async fn main(spawner: Spawner) {
     // Generate random seed. This is used to generate a random MAC address.
     let mut rng = Rng::new(p.RNG, Irqs);
     let mut mac_addr = [0u8; 6];
+    let mut seed = [0;8];
     mac_addr[0] = 0x02; // Locally administered unicast MAC
     rng.fill_bytes(&mut mac_addr[1..]);
+    let seed = u64::from_le_bytes(seed);
 
 
     // Generate a random MAC address using the seed.
@@ -175,6 +177,7 @@ async fn main(spawner: Spawner) {
         // if pressed && !prev_button {
         //     // Toggle local LED
         //     led_state = !led_state;
+        
         //     if led_state {
         //         led1.set_high();
         //         buf[0] = 1; // LED on command
