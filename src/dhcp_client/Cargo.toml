@@ -4,3 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+defmt = "0.3"
+defmt-rtt = "0.3"
+embedded-hal = "1.0.0"
+heapless = "0.7"
+
+# Embassy crates via Git
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-net = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["stm32h755zitx", "time-driver-any"] }
+
+# Eventueel voor async support
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+
+# Voor log output via RTT
+defmt = "0.3"
+defmt-rtt = "0.3"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
+
