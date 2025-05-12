@@ -54,6 +54,7 @@ dependencies = [
  "chrono",
  "cortex-m",
  "cortex-m-rt",
+ "crc-any",
  "critical-section",
  "defmt 0.3.100",
  "defmt-rtt",
@@ -61,6 +62,7 @@ dependencies = [
  "embassy-futures",
  "embassy-net",
  "embassy-stm32",
+ "embassy-sync",
  "embassy-time",
  "embassy-usb",
  "embedded-hal 0.2.7",
@@ -170,6 +172,12 @@ dependencies = [
  "quote",
  "syn 2.0.100",
 ]
+
+[[package]]
+name = "crc-any"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a62ec9ff5f7965e4d7280bd5482acd20aadb50d632cf6c1d74493856b011fa73"
 
 [[package]]
 name = "critical-section"

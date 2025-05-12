@@ -11,7 +11,8 @@ embassy-time = "0.4.0"
 embassy-net = {version = "0.6.0", features = ["defmt", "proto-ipv4", "medium-ethernet", "udp", "dhcpv4"] }
 embassy-usb = "0.4.0"
 embassy-futures = "0.1.0"
-
+embassy-sync = "0.6.2"
+crc-any = { version = "2.0", default-features = false }
 
 defmt = "0.3"
 defmt-rtt = "0.4"
