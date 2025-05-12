@@ -1,0 +1,85 @@
+#![no_std]
+#![no_main]
+
+use defmt_rtt as _;
+use panic_probe as _;
+use rand_core::RngCore;
+use embassy_executor::Spawner;
+use embassy_net::{udp::UdpSocket, StackResources, Ipv4Address, Ipv4Cidr};
+use embassy_stm32::{
+    eth::{Ethernet, PacketQueue, generic_smi::GenericSMI},
+    eth,
+    rng::{Rng, InterruptHandler as RngInterruptHandler},
+    peripherals::ETH,
+    bind_interrupts,
+    SharedData,
+    peripherals,
+    usb::Driver,
+    usb,
+};
+
+use embassy_usb::{
+    Builder,
+    class::cdc_acm::{CdcAcmClass, State},
+    UsbDevice,
+};
+use static_cell::StaticCell;
+use defmt::*;
+use core::mem::MaybeUninit;
+
+// Network config
+const NUCLEO_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 61);
+const GATEWAY: Ipv4Address = Ipv4Address::new(10, 42, 0, 1);
+const UDP_PORT: u16 = 4321;
+
+#[link_section = ".ram_d3.shared_data"]
+static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
+
+bind_interrupts!(struct Irqs {
+    ETH => eth::InterruptHandler;
+    OTG_FS => usb::InterruptHandler<peripherals::USB_OTG_FS>;
+    HASH_RNG => RngInterruptHandler<peripherals::RNG>;
+});
+
+
+#[embassy_executor::task]
+async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH, GenericSMI>>) -> ! {
+    runner.run().await
+}
+
+#[embassy_executor::task]
+async fn usb_task(mut usb: UsbDevice<'static, Driver<'static, peripherals::USB_OTG_FS>>) -> ! {
+    usb.run().await
+}
+
+
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    // Init hardware
+    let mut config = embassy_stm32::Config::default();
+    {
+        use embassy_stm32::rcc::*;
+        config.rcc.hsi = Some(HSIPrescaler::DIV1);
+        config.rcc.csi = true;
+        config.rcc.pll1 = Some(Pll {
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL50,
+            divp: Some(PllDiv::DIV2),
+            divq: Some(PllDiv::DIV8),
+            divr: None,
+        });
+        config.rcc.sys = Sysclk::PLL1_P;
+        config.rcc.ahb_pre = AHBPrescaler::DIV2;
+        config.rcc.apb1_pre = APBPrescaler::DIV2;
+        config.rcc.apb2_pre = APBPrescaler::DIV2;
+        config.rcc.apb3_pre = APBPrescaler::DIV2;
+        config.rcc.apb4_pre = APBPrescaler::DIV2;
+        config.rcc.voltage_scale = VoltageScale::Scale1;
+        config.rcc.supply_config = SupplyConfig::DirectSMPS;
+        config.rcc.mux.usbsel = mux::Usbsel::HSI48;
+    }
+
+    let p = embassy_stm32::init_primary(config, &SHARED_DATA);
+
+}
