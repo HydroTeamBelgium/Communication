@@ -33,9 +33,7 @@ use embassy_sync::{
     pipe::Pipe,
 };
 use embassy_usb::{
-    Builder,
-    class::cdc_acm::{CdcAcmClass, State},
-    UsbDevice,
+    class::{self, cdc_acm::{CdcAcmClass, State}}, Builder, UsbDevice
 };
 use static_cell::StaticCell;
 use defmt::{*, assert};
@@ -218,49 +216,22 @@ fn setup_ethernet(
 /// 
 /// - Reads data from USB serial port.
 /// - Writes data to a pipe for the UDP task.
-#[embassy_executor::task]
-async fn usb_task(
-    mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>,
-) -> ! {
-    let mut buf = [0; 512];
-    loop {
-        class.wait_connection().await;
-        info!("USB connected");
-
-        loop {
-            let n: usize = USB_TO_ETH_PIPE.read(&mut buf).await;
-            // if n == 0) {
-            //     break
-            // }
-            info!("Forwarding {} bytes over UDP", n);
-            if n > 0 {
-            match class.write_packet(&buf[..n]).await {
-                Ok(_) => info!("USB send successful"),
-                Err(e) => error!("USB send error: {:?}", e),
-            }
-            // match class.read_packet(&mut buf).await {
-            //     Ok(n) => {
-            //         if n > 0 {
-            //             info!("Received {} bytes over USB", n);
-            //             // Write to pipe (this will block if pipe is full)
-            //             USB_TO_ETH_PIPE.write(&buf[..n]).await;
-            //         }
-            //     }
-            //     Err(_) => {
-            //         info!("USB disconnected");
-            //         break;
-            //     }
-            // }
-            }}
-    }
-}
+// async fn usb_task(
+//     mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>,
+// ) -> ! {
+    
+//             // info!("vewav")
+        
+//     }
+// }
 
 
 /// UDP Network Task
 /// 
 /// - Reads data from the USB pipe.
 /// - Sends data over UDP with retry logic.
-async fn udp_task(stack: &'static Stack<'static>) -> () {
+#[embassy_executor::task]
+async fn udp_task(stack: &'static Stack<'static>, mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>) -> () {
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
     let mut rx_buffer = [0; 1024];
     let mut tx_meta = [PacketMetadata::EMPTY; 16];
@@ -274,10 +245,18 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
         &mut tx_buffer
     );
 
-    socket.bind(NETWORK_UDP_PORT).unwrap();
+    class.wait_connection().await;
+    info!("USB connected");
+
+    stack.wait_config_up().await;
+    info!("Network stack is up and running");
+
+    let result = socket.bind(NETWORK_UDP_PORT).unwrap();
+    info!("{:?}",result);
     // let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), NETWORK_UDP_PORT);
-    let mut n = 0;
     let mut buf = [0; 512];
+    let mut buf_usb = [0; 64];
+
     loop {
         // Read from pipe (this will block until data is available)
         match embassy_time::with_timeout(
@@ -292,15 +271,17 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
             Ok(Err(e)) => warn!("{:?}", e),
             Err(_) => warn!("blablabla"),
             }
-        n += 1;
-        if n > 100 {break};
-        // let n = USB_TO_ETH_PIPE.read(&mut buf).await;
-        // info!("Forwarding {} bytes over UDP", n);
-        
-        // match socket.send_to(&buf[..n], remote_endpoint).await {
-        //     Ok(_) => info!("UDP send successful"),
-        //     Err(e) => error!("UDP send error: {:?}", e),
-        // }
+
+        if USB_TO_ETH_PIPE.len() > 15000 {
+            let n: usize = USB_TO_ETH_PIPE.read(&mut buf_usb).await;
+            
+            info!("Forwarding {} bytes over USB", n);
+            if n > 0 {
+            match class.write_packet(&buf_usb[..n]).await {
+                Ok(_) => info!("USB send successful"),
+                Err(e) => error!("USB send error: {:?}", e),
+            }};}
+        info!("{:?}", USB_TO_ETH_PIPE.len())
     }
 }
 
@@ -333,8 +314,8 @@ async fn main(spawner: Spawner) {
 
     // Spawn Tasks
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
-    udp_task(stack).await;
-    spawner.spawn(usb_task(class)).expect("Failed to spawn USB task");
+    // spawner.spawn(usb_task(class)).expect("Failed to spawn USB task");
+    spawner.spawn(udp_task(stack, class)).expect("Failed to spawn UDP task");
 
     // Run USB Device
     usb.run().await;
