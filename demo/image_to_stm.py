@@ -18,17 +18,17 @@ filename = filedialog.askopenfilename(initialdir = "/",
 with open(filename, 'rb') as image_file:
     byte_data = image_file.read()
 
-# Transform byte_data(hexadecimal format?) into a list of u8 integers
-u8_array = list(byte_data)
-# print(u8_array)
-print(f"Loaded {len(u8_array)} bytes")
+# # Transform byte_data(hexadecimal format?) into a list of u8 integers
+# u8_array = list(byte_data)
+# # print(u8_array)
+# print(f"Loaded {len(u8_array)} bytes")
 
-with serial.Serial(PORT, BAUD, timeout=1) as ser:
-    print(f"connected to {PORT}")
+# with serial.Serial(PORT, BAUD, timeout=1) as ser:
+#     print(f"connected to {PORT}")
 
-    message = "Hello blabla"
-    ser.write(message.encode('utf-8'))
-    print('clear')
+#     message = "Hello blabla"
+#     ser.write(message.encode('utf-8'))
+#     print('clear')
 
 
 
@@ -41,3 +41,18 @@ with serial.Serial(PORT, BAUD, timeout=1) as ser:
 
 # new_text_file.write("]")
 # new_text_file.close()
+
+def send_usb(image_data):
+    with serial.Serial(PORT, BAUD, timeout=2) as ser:
+        print(f"[USB] Connected to {PORT}")
+        ser.write(image_data)
+
+def receive_usb():
+     with serial.Serial(PORT, BAUD, timeout=) as ser:
+        print(f"[USB] Connected to {PORT}")
+        
+
+        while True:
+            print(ser.read())
+
+

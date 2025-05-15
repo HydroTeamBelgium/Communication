@@ -61,13 +61,7 @@ def send_usb(image_data: bytes, usb_done_event):
         print(f"[USB] Connected to {PORT}")
         ser.write(len(image_data).to_bytes(4, 'big'))
 
-        chunk_size = 512
-        for i in range(0, len(image_data), chunk_size):
-            chunk = image_data[i:i+chunk_size]
-            ser.write(chunk)
-            print(f"[USB] Sent {len(chunk)} bytes")
-            time.sleep(0.01)
-        print("[USB] Done sending")
+        ser.write(image_data)
 
     usb_done_event.set()  # Notify UDP thread
 
