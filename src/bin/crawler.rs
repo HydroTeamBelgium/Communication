@@ -44,19 +44,31 @@ use core::mem::MaybeUninit;
 
 
 // --- Network Configuration ---
+// Device 1 (Sender)
 const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 61);
+// Device 2 (Responder) 
+// const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 60);
 
 const NETWORK_GATEWAY_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 1);
 const NETWORK_GATEWAY_UDP_PORT: u16 = 4321;
+
 
 
 // --- Buffers ---
 const USB_BUFFER_SIZE: usize = 512;
 const NETWORK_RX_BUFFER_SIZE: usize = 1024;
 
-// -- Command Protocol --
+// -- PC to Nucleo USB Command Protocol --
 const CMD_LED_ON: u8 = 0x01;
 const CMD_LED_OFF: u8 = 0x02;
+
+// -- Network Crawler Protocol --
+// Use different ports for discovery vs data forwarding
+const DISCOVERY_PORT: u16 = 12345;
+const DATA_FORWARDING_PORT: u16 = 4321;
+
+const DISCOVERY_REQUEST: u8 = 0xA0;
+const DISCOVERY_RESPONSE: u8 = 0xA1;
 
 
 // Ensure buffers meet minimum requirements
@@ -215,6 +227,139 @@ fn setup_ethernet(
 //              TASKS
 // =============================================
 
+// FOR DEVICE 1 (SENDER) - paste.txt
+#[embassy_executor::task]
+async fn discovery_sender_task(stack: &'static Stack<'static>) -> ! {
+    // Wait for network to be ready
+    loop {
+        if stack.is_link_up() {
+            info!("Network link is up, starting discovery");
+            break;
+        }
+        embassy_time::Timer::after_millis(100).await;
+    }
+    
+    // Additional delay to ensure network stack is fully ready
+    embassy_time::Timer::after_secs(2).await;
+
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf = [0; 256];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf = [0; 256];
+
+    let mut socket = UdpSocket::new(*stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    
+    // Bind to a different port for discovery
+    match socket.bind(DISCOVERY_PORT + 1) {
+        Ok(_) => info!("Discovery sender bound to port {}", DISCOVERY_PORT + 1),
+        Err(e) => {
+            error!("Failed to bind discovery sender: {:?}", e);
+        }
+    }
+
+    let discovery_msg = [DISCOVERY_REQUEST];
+
+    loop {
+        // Try both broadcast and direct IP
+        let broadcast_ip = Ipv4Address::new(10, 42, 0, 255);
+        let direct_ip = Ipv4Address::new(10, 42, 0, 60); // Direct to other device
+        
+        let broadcast_endpoint = IpEndpoint::new(broadcast_ip.into(), DISCOVERY_PORT);
+        let direct_endpoint = IpEndpoint::new(direct_ip.into(), DISCOVERY_PORT);
+
+        info!("Sending discovery request to broadcast and direct");
+        
+        // Send to broadcast
+        match socket.send_to(&discovery_msg, broadcast_endpoint).await {
+            Ok(_) => info!("Sent discovery to broadcast"),
+            Err(e) => warn!("Failed to send broadcast: {:?}", e),
+        }
+
+        // Send to direct IP
+        match socket.send_to(&discovery_msg, direct_endpoint).await {
+            Ok(_) => info!("Sent discovery to direct IP"),
+            Err(e) => warn!("Failed to send direct: {:?}", e),
+        }
+
+        // Wait for response with timeout
+        let mut payload_buf = [0u8; 256];
+        match embassy_time::with_timeout(
+            embassy_time::Duration::from_secs(2),
+            socket.recv_from(&mut payload_buf)
+        ).await {
+            Ok(Ok((n, sender))) => {
+                if n > 0 && payload_buf[0] == DISCOVERY_RESPONSE {
+                    info!("*** DISCOVERY SUCCESS! Found MCU at {:?} ***", sender);
+                } else {
+                    info!("Unexpected response from {:?}: {:02X}", sender, payload_buf[0]);
+                }
+            }
+            Ok(Err(e)) => {
+                warn!("Discovery receive error: {:?}", e);
+            }
+            Err(_) => {
+                info!("Discovery timeout - no response received");
+            }
+        }
+
+        embassy_time::Timer::after_secs(5).await;
+    }
+}
+
+// FOR DEVICE 2 (RESPONDER) - paste-2.txt
+#[embassy_executor::task]
+async fn discovery_responder_task(stack: &'static Stack<'static>) -> ! {
+    // Wait for network to be ready
+    loop {
+        if stack.is_link_up() {
+            info!("Network link is up, starting discovery responder");
+            break;
+        }
+        embassy_time::Timer::after_millis(100).await;
+    }
+    
+    // Additional delay to ensure network stack is fully ready
+    embassy_time::Timer::after_secs(2).await;
+
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf = [0; 256];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf = [0; 256];
+
+    let mut socket = UdpSocket::new(*stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    
+    match socket.bind(DISCOVERY_PORT) {
+        Ok(_) => info!("Discovery responder bound to port {}", DISCOVERY_PORT),
+        Err(e) => {
+            error!("Failed to bind discovery responder: {:?}", e);
+        }
+    }
+
+    let response = [DISCOVERY_RESPONSE];
+
+    loop {
+        let mut payload_buf = [0u8; 256];
+        match socket.recv_from(&mut payload_buf).await {
+            Ok((n, sender)) => {
+                info!("Received {} bytes from {:?}", n, sender);
+                if n > 0 && payload_buf[0] == DISCOVERY_REQUEST {
+                    info!("*** DISCOVERY REQUEST RECEIVED from {:?} ***", sender);
+                    match socket.send_to(&response, sender).await {
+                        Ok(_) => info!("Sent discovery response to {:?}", sender),
+                        Err(e) => error!("Failed to send response: {:?}", e),
+                    }
+                } else {
+                    info!("Unexpected packet: {:02X} from {:?}", payload_buf[0], sender);
+                }
+            }
+            Err(e) => {
+                warn!("Discovery responder receive error: {:?}", e);
+                embassy_time::Timer::after_millis(100).await;
+            }
+        }
+    }
+}
+
 // LED Control Task
 #[embassy_executor::task]
 async fn led_task(mut led: Output<'static>) -> ! {
@@ -274,11 +419,16 @@ async fn usb_task(
 
 
 /// UDP Network Task
-/// 
-/// - Reads data from the USB pipe.
-/// - Sends data over UDP with retry logic.
 #[embassy_executor::task]
 async fn udp_task(stack: &'static Stack<'static>) -> ! {
+    // Wait for network to be ready
+    loop {
+        if stack.is_link_up() {
+            break;
+        }
+        embassy_time::Timer::after_millis(100).await;
+    }
+
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
     let mut rx_buffer = [0; 1024];
     let mut tx_meta = [PacketMetadata::EMPTY; 16];
@@ -292,12 +442,21 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
         &mut tx_buffer
     );
 
-    socket.bind(NETWORK_GATEWAY_UDP_PORT).unwrap();
-    let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), NETWORK_GATEWAY_UDP_PORT);
+    // Use a different port for data forwarding
+    match socket.bind(DATA_FORWARDING_PORT + 100) {
+        Ok(_) => info!("UDP data forwarding bound to port {}", DATA_FORWARDING_PORT + 100),
+        Err(e) => {
+            error!("Failed to bind UDP data socket: {:?}", e);
+        }
+    }
+    
+    let remote_endpoint = IpEndpoint::new(
+        embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), 
+        DATA_FORWARDING_PORT
+    );
 
     let mut buf = [0; 512];
     loop {
-        // Read from pipe (this will block until data is available)
         let n = USB_TO_ETH_PIPE.read(&mut buf).await;
         info!("Forwarding {} bytes over UDP", n);
 
@@ -343,6 +502,13 @@ async fn main(spawner: Spawner) {
     spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
     spawner.spawn(usb_task(class)).expect("Failed to spawn USB task");
     spawner.spawn(led_task(led)).expect("Failed to spawn LED task");
+
+    // Sender task
+    spawner.spawn(discovery_sender_task(stack)).expect("Failed to spawn discovery task");
+
+    // Responder task
+    // spawner.spawn(discovery_responder_task(stack)).expect("Failed to spawn discovery task");
+
 
     // Run USB Device
     usb.run().await;
