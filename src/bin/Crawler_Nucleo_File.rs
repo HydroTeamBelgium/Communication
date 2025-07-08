@@ -2,8 +2,6 @@
 #![no_main]
 
 use defmt_rtt as _;
-use embassy_time::Duration;
-use heapless::Vec;
 use panic_probe as _;
 use rand_core::RngCore;
 use embassy_executor::Spawner;
@@ -16,29 +14,28 @@ use embassy_net::{
     Stack
 };
 use embassy_stm32::{
-    eth::{Ethernet, PacketQueue, generic_smi::GenericSMI},
-    eth,
-    rng::{Rng, InterruptHandler as RngInterruptHandler},
-    peripherals::ETH,
     bind_interrupts,
-    SharedData,
-    peripherals,
-    usb::Driver,
-    usb,
-    Config,
+    eth::{self, generic_smi::GenericSMI, Ethernet, PacketQueue},
+    gpio::{Level, Output, Speed},
+    peripherals::{self, ETH},
     rcc::*,
+    rng::{InterruptHandler as RngInterruptHandler, Rng},
+    usb::{self, Driver},
+    Config,
+    SharedData
 };
 use embassy_sync::{
     blocking_mutex::raw::ThreadModeRawMutex, 
-    pipe::Pipe,
+    pipe::Pipe, signal::Signal,
 };
 use embassy_usb::{
-    class::{self, cdc_acm::{CdcAcmClass, State}}, Builder, UsbDevice
+    Builder,
+    class::cdc_acm::{CdcAcmClass, State},
+    UsbDevice,
 };
 use static_cell::StaticCell;
 use defmt::{*, assert};
 use core::mem::MaybeUninit;
-
 
 // =============================================
 //              CONFIGURATION
@@ -47,14 +44,19 @@ use core::mem::MaybeUninit;
 
 
 // --- Network Configuration ---
-const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 1);
+const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 61);
+
 const NETWORK_GATEWAY_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 1);
-const NETWORK_UDP_PORT: u16 = 4321;
+const NETWORK_GATEWAY_UDP_PORT: u16 = 4321;
 
 
 // --- Buffers ---
 const USB_BUFFER_SIZE: usize = 512;
 const NETWORK_RX_BUFFER_SIZE: usize = 1024;
+
+// -- Command Protocol --
+const CMD_LED_ON: u8 = 0x01;
+const CMD_LED_OFF: u8 = 0x02;
 
 
 // Ensure buffers meet minimum requirements
@@ -82,7 +84,8 @@ static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 // Inter-task Communication
-static USB_TO_ETH_PIPE: Pipe<ThreadModeRawMutex, 100000> = Pipe::new();
+static USB_TO_ETH_PIPE: Pipe<ThreadModeRawMutex, 4096> = Pipe::new();
+static LED_SIGNAL: Signal<ThreadModeRawMutex, bool> = Signal::new();
 
 // Hardware Shared Data
 #[link_section = ".ram_d3.shared_data"]
@@ -212,18 +215,62 @@ fn setup_ethernet(
 //              TASKS
 // =============================================
 
+// LED Control Task
+#[embassy_executor::task]
+async fn led_task(mut led: Output<'static>) -> ! {
+    loop {
+        let led_state = LED_SIGNAL.wait().await;
+        if led_state {
+            led.set_high();
+            info!("LED ON");
+        } else {
+            led.set_low();
+            info!("LED OFF");
+        }
+    }
+}
+
 /// USB Communication Task
 /// 
 /// - Reads data from USB serial port.
 /// - Writes data to a pipe for the UDP task.
-// async fn usb_task(
-//     mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>,
-// ) -> ! {
-    
-//             // info!("vewav")
-        
-//     }
-// }
+#[embassy_executor::task]
+async fn usb_task(
+    mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>,
+) -> ! {
+    let mut buf  = [0; 512];
+    loop {
+        info!("Waiting for USB connection");
+        class.wait_connection().await;
+        info!("USB connected");
+
+        loop {
+            match class.read_packet(&mut buf).await {
+                Ok(n) => {
+                    if n > 0 {
+                        info!("Received {} bytes over USB", n);
+
+                        if buf[0] == CMD_LED_ON {
+                            info!("LED ON command received");
+                            LED_SIGNAL.signal(true);
+                        } else if buf[0] == CMD_LED_OFF {
+                            info!("LED OFF command received");
+                            LED_SIGNAL.signal(false);
+                        } else {
+                            // Write to pipe (this will block if pipe is full)
+                            // Waits for current data &buf[..n] to be successfully written to the pipe
+                            USB_TO_ETH_PIPE.write(&buf[..n]).await;
+                        }
+                    }
+                }
+                Err(_) => {
+                    info!("USB disconnected");
+                    break;
+                }
+            }
+        }
+    }
+}
 
 
 /// UDP Network Task
@@ -231,7 +278,7 @@ fn setup_ethernet(
 /// - Reads data from the USB pipe.
 /// - Sends data over UDP with retry logic.
 #[embassy_executor::task]
-async fn udp_task(stack: &'static Stack<'static>, mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>) -> () {
+async fn udp_task(stack: &'static Stack<'static>) -> ! {
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
     let mut rx_buffer = [0; 1024];
     let mut tx_meta = [PacketMetadata::EMPTY; 16];
@@ -245,43 +292,19 @@ async fn udp_task(stack: &'static Stack<'static>, mut class: CdcAcmClass<'static
         &mut tx_buffer
     );
 
-    class.wait_connection().await;
-    info!("USB connected");
+    socket.bind(NETWORK_GATEWAY_UDP_PORT).unwrap();
+    let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), NETWORK_GATEWAY_UDP_PORT);
 
-    stack.wait_config_up().await;
-    info!("Network stack is up and running");
-
-    let result = socket.bind(NETWORK_UDP_PORT).unwrap();
-    info!("{:?}",result);
-    // let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), NETWORK_UDP_PORT);
     let mut buf = [0; 512];
-    let mut buf_usb = [0; 64];
-
     loop {
         // Read from pipe (this will block until data is available)
-        match embassy_time::with_timeout(
-            Duration::from_millis(10),
-            socket.recv_from(&mut buf)
-        ).await {
-            Ok(Ok((len, remote))) => {
-                info!("Received command: {} from {}", buf[0], remote);
-                USB_TO_ETH_PIPE.write(&buf[..len]).await;
-                },
-            
-            Ok(Err(e)) => warn!("{:?}", e),
-            Err(_) => warn!("blablabla"),
-            }
+        let n = USB_TO_ETH_PIPE.read(&mut buf).await;
+        info!("Forwarding {} bytes over UDP", n);
 
-        if USB_TO_ETH_PIPE.len() > 15000 {
-            let n: usize = USB_TO_ETH_PIPE.read(&mut buf_usb).await;
-            
-            info!("Forwarding {} bytes over USB", n);
-            if n > 0 {
-            match class.write_packet(&buf_usb[..n]).await {
-                Ok(_) => info!("USB send successful"),
-                Err(e) => error!("USB send error: {:?}", e),
-            }};}
-        info!("{:?}", USB_TO_ETH_PIPE.len())
+        match socket.send_to(&buf[..n], remote_endpoint).await {
+            Ok(_) => info!("UDP send successful"),
+            Err(e) => error!("UDP send error: {:?}", e),
+        }
     }
 }
 
@@ -303,6 +326,9 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
 
+    // Initialize LED (assuming PB0 - adjust pin on board)
+    let led = Output::new(p.PB14, Level::Low, Speed::Low);
+
     // Initialize Hardware
     let (class, mut usb) = setup_usb(p.USB_OTG_FS, p.PA12, p.PA11);
     let (stack, runner) = setup_ethernet(
@@ -314,8 +340,9 @@ async fn main(spawner: Spawner) {
 
     // Spawn Tasks
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
-    // spawner.spawn(usb_task(class)).expect("Failed to spawn USB task");
-    spawner.spawn(udp_task(stack, class)).expect("Failed to spawn UDP task");
+    spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
+    spawner.spawn(usb_task(class)).expect("Failed to spawn USB task");
+    spawner.spawn(led_task(led)).expect("Failed to spawn LED task");
 
     // Run USB Device
     usb.run().await;
