@@ -35,6 +35,7 @@ use embassy_usb::{
     class::cdc_acm::{CdcAcmClass, State},
     UsbDevice,
 };
+use embassy_futures::select::{select, Either};
 use static_cell::StaticCell;
 use defmt::{*, assert};
 use core::mem::MaybeUninit;
@@ -52,14 +53,12 @@ const NETWORK_UDP_PORT: u16 = 4321;
 
 
 // --- Buffers ---
-const USB_BUFFER_SIZE: usize = 512;
-const NETWORK_RX_BUFFER_SIZE: usize = 1024;
+const USB_BUFFER_SIZE: usize = 1024;
 
 
 // Ensure buffers meet minimum requirements
 fn validate_config() {
     assert!(USB_BUFFER_SIZE >= 64, "USB_BUFFER_SIZE must be at least 64");
-    assert!(NETWORK_RX_BUFFER_SIZE >= 512, "NETWORK_RX_BUFFER_SIZE must be at least 512");
 }
 
 
@@ -82,6 +81,7 @@ static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 // Inter-task Communication
 static USB_TO_ETH_PIPE: Pipe<ThreadModeRawMutex, 4096> = Pipe::new();
+static ETH_TO_USB_PIPE: Pipe<ThreadModeRawMutex, 16384> = Pipe::new();
 
 // Hardware Shared Data
 #[link_section = ".ram_d3.shared_data"]
@@ -215,65 +215,103 @@ fn setup_ethernet(
 /// 
 /// - Reads data from USB serial port.
 /// - Writes data to a pipe for the UDP task.
+
 #[embassy_executor::task]
 async fn usb_task(
     mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>,
 ) -> ! {
-    let mut buf = [0; 512];
+    const CHUNK_SIZE: usize = 64; // Match your USB endpoint size
+    let mut usb_rx_buf = [0u8; CHUNK_SIZE];
+    let mut pipe_rx_buf = [0u8; 512]; // Keep UDP-sized buffer
+
     loop {
         class.wait_connection().await;
         info!("USB connected");
 
         loop {
-            match class.read_packet(&mut buf).await {
-                Ok(n) => {
+            match select(
+                class.read_packet(&mut usb_rx_buf),
+                ETH_TO_USB_PIPE.read(&mut pipe_rx_buf),
+            )
+            .await
+            {
+                Either::First(Ok(n)) => {
                     if n > 0 {
                         info!("Received {} bytes over USB", n);
-                        // Write to pipe (this will block if pipe is full)
-                        USB_TO_ETH_PIPE.write(&buf[..n]).await;
+                        USB_TO_ETH_PIPE.write(&usb_rx_buf[..n]).await;
                     }
                 }
-                Err(_) => {
+                Either::First(Err(_)) => {
                     info!("USB disconnected");
                     break;
+                }
+                Either::Second(n) => {
+                    if n > 0 {
+                        info!("Forwarding {} bytes over USB (chunked)", n);
+                        // Chunk the data to match USB endpoint size
+                        for chunk in pipe_rx_buf[..n].chunks(CHUNK_SIZE) {
+                            let mut attempts = 0;
+                            while let Err(e) = class.write_packet(chunk).await {
+                                attempts += 1;
+                                if attempts > 3 {
+                                    error!("USB write failed after retries: {:?}", e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-
 /// UDP Network Task
 /// 
 /// - Reads data from the USB pipe.
-/// - Sends data over UDP with retry logic.
+/// - Sends data over UDP.
 #[embassy_executor::task]
 async fn udp_task(stack: &'static Stack<'static>) -> ! {
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
-    let mut rx_buffer = [0; 1024];
+    let mut rx_buffer = [0; 4096];
     let mut tx_meta = [PacketMetadata::EMPTY; 16];
     let mut tx_buffer = [0; 1024];
-    
+
     let mut socket = UdpSocket::new(
         *stack,
         &mut rx_meta,
         &mut rx_buffer,
         &mut tx_meta,
-        &mut tx_buffer
+        &mut tx_buffer,
     );
 
     socket.bind(NETWORK_UDP_PORT).unwrap();
-    let remote_endpoint = IpEndpoint::new(embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), NETWORK_UDP_PORT);
+    let remote_endpoint =
+        IpEndpoint::new(embassy_net::IpAddress::Ipv4(NETWORK_GATEWAY_IP), NETWORK_UDP_PORT);
 
-    let mut buf = [0; 512];
     loop {
-        // Read from pipe (this will block until data is available)
-        let n = USB_TO_ETH_PIPE.read(&mut buf).await;
-        info!("Forwarding {} bytes over UDP", n);
-        
-        match socket.send_to(&buf[..n], remote_endpoint).await {
-            Ok(_) => info!("UDP send successful"),
-            Err(e) => error!("UDP send error: {:?}", e),
+        let mut buf_usb_to_udp = [0; 512];
+        let mut buf_udp_to_usb = [0; 512];
+
+        match select(
+            USB_TO_ETH_PIPE.read(&mut buf_usb_to_udp),
+            socket.recv_from(&mut buf_udp_to_usb),
+        )
+        .await {
+            Either::First(n) => {
+                info!("Forwarding {} bytes over UDP", n);
+                match socket.send_to(&buf_usb_to_udp[..n], remote_endpoint).await {
+                    Ok(_) => info!("UDP send successful"),
+                    Err(e) => error!("UDP send error: {:?}", e),
+                }
+            }
+            Either::Second(Ok((n, _addr))) => {
+                info!("Received {} bytes from UDP", n);
+                ETH_TO_USB_PIPE.write(&buf_udp_to_usb[..n]).await;
+            }
+            Either::Second(Err(e)) => {
+                error!("UDP receive error: {:?}", e);
+            }
         }
     }
 }

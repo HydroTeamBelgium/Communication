@@ -5,7 +5,7 @@ import time
 from tkinter import filedialog
 
 # Configuration
-PORT = 'COM14'  # Change this if needed
+PORT = 'COM11'  # Change this if needed
 BAUD = 115200
 UDP_LOOPBACK_PORT = 4321  # Must match what the Nucleo uses
 
