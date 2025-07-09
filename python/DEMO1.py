@@ -8,7 +8,7 @@ import subprocess
 # ======================================
 # CONFIGURATION
 # ======================================
-PORT = 'COM11'
+PORT = 'COM15'
 BAUD = 12000000
 
 USB_RECEIVE_FILENAME = "usb_received_image.jpg"
