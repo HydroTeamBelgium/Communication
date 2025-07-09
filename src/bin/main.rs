@@ -39,7 +39,7 @@ use embassy_futures::select::{select, Either};
 use static_cell::StaticCell;
 use defmt::{*, assert};
 use core::{mem::MaybeUninit};
-use embassy_time::Timer;
+use embassy_time::{Timer};
 
 // =============================================
 //              CONFIGURATION
