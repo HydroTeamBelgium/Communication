@@ -36,23 +36,15 @@ use embassy_usb::{
 use static_cell::StaticCell;
 use defmt::{*, assert};
 use core::mem::MaybeUninit;
-
+use embassy_net::EthernetAddress;
 // =============================================
 //              CONFIGURATION
 // =============================================
-// Grouped all constants into logical sections with documentation.
-
 
 // --- Network Configuration ---
-// Device 1 (Sender)
-const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 61);
-// Device 2 (Responder) 
-// const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 60);
-
-const NETWORK_GATEWAY_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 1);
+// Now using MAC-based IP generation instead of hardcoded IPs
+const NETWORK_GATEWAY_IP: Ipv4Address = Ipv4Address::new(169, 254, 1, 1);
 const NETWORK_GATEWAY_UDP_PORT: u16 = 4321;
-
-
 
 // --- Buffers ---
 const USB_BUFFER_SIZE: usize = 512;
@@ -63,25 +55,20 @@ const CMD_LED_ON: u8 = 0x01;
 const CMD_LED_OFF: u8 = 0x02;
 
 // -- Network Crawler Protocol --
-// Use different ports for discovery vs data forwarding
 const DISCOVERY_PORT: u16 = 12345;
 const DATA_FORWARDING_PORT: u16 = 4321;
 
 const DISCOVERY_REQUEST: u8 = 0xA0;
 const DISCOVERY_RESPONSE: u8 = 0xA1;
 
-
-// Ensure buffers meet minimum requirements
 fn validate_config() {
     assert!(USB_BUFFER_SIZE >= 64, "USB_BUFFER_SIZE must be at least 64");
     assert!(NETWORK_RX_BUFFER_SIZE >= 512, "NETWORK_RX_BUFFER_SIZE must be at least 512");
 }
 
-
 // =============================================
 //              STATIC ALLOCATIONS
 // =============================================
-// Grouped buffers by purpose (USB vs. Network)
 
 // USB Buffers
 static EP_OUT_BUFFER: StaticCell<[u8; USB_BUFFER_SIZE]> = StaticCell::new();
@@ -112,9 +99,7 @@ bind_interrupts!(struct Irqs {
     HASH_RNG => RngInterruptHandler<peripherals::RNG>;
 });
 
-/// Configures the STM32 clock tree for optimal performance.
 fn configure_clock(config: &mut Config) {
-    
     config.rcc.hsi = Some(HSIPrescaler::DIV1);
     config.rcc.csi = true;
     config.rcc.pll1 = Some(Pll {
@@ -134,10 +119,35 @@ fn configure_clock(config: &mut Config) {
     config.rcc.voltage_scale = VoltageScale::Scale1;
     config.rcc.supply_config = SupplyConfig::DirectSMPS;
     config.rcc.mux.usbsel = mux::Usbsel::HSI48;
+}
+
+/// Generate MAC address from STM32 unique ID - always available regardless of network state
+fn generate_mac_from_serial() -> [u8; 6] {
+    let uid_base = 0x1FF1_E800 as *const u32;
+    let uid0 = unsafe { core::ptr::read_volatile(uid_base.offset(0)) };
+    let uid1 = unsafe { core::ptr::read_volatile(uid_base.offset(1)) };
+
+    [
+        0x02, // Locally administered MAC (bit 1 set), unicast (bit 0 cleared)
+        (uid0 >> 0) as u8,
+        (uid0 >> 8) as u8,
+        (uid0 >> 16) as u8,
+        (uid0 >> 24) as u8,
+        (uid1 >> 0) as u8,
+    ]
+}
+
+// Still doing statically at the moment, should happne dynamically in the future,
+// Trouble with generating unique addresses from mac address
+// Mac addres is assigned dynamically however
+fn generate_link_local_ip() -> Ipv4Address {
+    // Ipv4Address::new(169, 254, 1, 1) // First address
+    Ipv4Address::new(169, 254, 1, 2) // Second address
+    // Ipv4Address::new(169, 254, 1, 3) // Third address
+    // Ipv4Address::new(169, 254, 1, 4) // Fourth address
 
 }
 
-/// Initializes the USB CDC ACM (Serial) interface.
 fn setup_usb(
     p: peripherals::USB_OTG_FS,
     pa12: peripherals::PA12,
@@ -173,7 +183,7 @@ fn setup_usb(
     (class, usb)
 }
 
-/// Initializes the Ethernet interface with static IP.
+/// Setup Ethernet with MAC-based static IP - no DHCP dependency
 fn setup_ethernet(
     eth: peripherals::ETH,
     pa1: peripherals::PA1,
@@ -187,9 +197,7 @@ fn setup_ethernet(
     pg11: peripherals::PG11,
     rng: peripherals::RNG,
     mac_addr: [u8; 6],
-) -> (Stack<'static>, embassy_net::Runner<'static, Ethernet<'static, ETH, GenericSMI>>)
- {
-    
+) -> (Stack<'static>, embassy_net::Runner<'static, Ethernet<'static, ETH, GenericSMI>>) {
     let device = Ethernet::new(
         PACKETS.init(PacketQueue::<8, 8>::new()),
         eth,
@@ -205,12 +213,14 @@ fn setup_ethernet(
         pg11,
         GenericSMI::new(0),
         mac_addr,
-);
+    );
 
+    // Generate link-local IP based on MAC address
+    let ip = generate_link_local_ip();
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: Ipv4Cidr::new(NETWORK_LOCAL_IP, 24),
-        dns_servers: heapless::Vec::new(),
-        gateway: Some(NETWORK_GATEWAY_IP),
+        address: Ipv4Cidr::new(ip, 16),
+        gateway: None,
+        dns_servers: Default::default(),
     });
 
     let mut rng = Rng::new(rng, Irqs);
@@ -218,29 +228,19 @@ fn setup_ethernet(
     rng.try_fill_bytes(&mut seed).unwrap();
     let seed = u64::from_le_bytes(seed);
 
-    embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed)
+    let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
+    (stack, runner)
 }
-
-
 
 // =============================================
 //              TASKS
 // =============================================
 
-// FOR DEVICE 1 (SENDER) - paste.txt
+/// Discovery sender - only runs when network is ready, program continues without it
 #[embassy_executor::task]
 async fn discovery_sender_task(stack: &'static Stack<'static>) -> ! {
-    // Wait for network to be ready
-    loop {
-        if stack.is_link_up() {
-            info!("Network link is up, starting discovery");
-            break;
-        }
-        embassy_time::Timer::after_millis(100).await;
-    }
-    
-    // Additional delay to ensure network stack is fully ready
-    embassy_time::Timer::after_secs(2).await;
+    // Wait for network readiness, but don't block main program
+    wait_for_network_ready(stack).await;
 
     let mut rx_meta = [PacketMetadata::EMPTY; 4];
     let mut rx_buf = [0; 256];
@@ -248,8 +248,7 @@ async fn discovery_sender_task(stack: &'static Stack<'static>) -> ! {
     let mut tx_buf = [0; 256];
 
     let mut socket = UdpSocket::new(*stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
-    
-    // Bind to a different port for discovery
+
     match socket.bind(DISCOVERY_PORT + 1) {
         Ok(_) => info!("Discovery sender bound to port {}", DISCOVERY_PORT + 1),
         Err(e) => {
@@ -260,25 +259,21 @@ async fn discovery_sender_task(stack: &'static Stack<'static>) -> ! {
     let discovery_msg = [DISCOVERY_REQUEST];
 
     loop {
-        // Try both broadcast and direct IP
-        let broadcast_ip = Ipv4Address::new(10, 42, 0, 255);
-        let direct_ip = Ipv4Address::new(10, 42, 0, 60); // Direct to other device
-        
+        // Use broadcast in link-local range
+        let broadcast_ip = Ipv4Address::new(169, 254, 255, 255);
         let broadcast_endpoint = IpEndpoint::new(broadcast_ip.into(), DISCOVERY_PORT);
-        let direct_endpoint = IpEndpoint::new(direct_ip.into(), DISCOVERY_PORT);
 
-        info!("Sending discovery request to broadcast and direct");
-        
-        // Send to broadcast
+        // Try to get the current IP from stack
+        let current_ip = stack.config_v4().map(|c| c.address.address());
+        if let Some(ip) = current_ip {
+            info!("Sending discovery from IP {} to broadcast", ip);
+        } else {
+            info!("Sending discovery to broadcast (IP not yet assigned)");
+        }
+
         match socket.send_to(&discovery_msg, broadcast_endpoint).await {
             Ok(_) => info!("Sent discovery to broadcast"),
             Err(e) => warn!("Failed to send broadcast: {:?}", e),
-        }
-
-        // Send to direct IP
-        match socket.send_to(&discovery_msg, direct_endpoint).await {
-            Ok(_) => info!("Sent discovery to direct IP"),
-            Err(e) => warn!("Failed to send direct: {:?}", e),
         }
 
         // Wait for response with timeout
@@ -306,20 +301,10 @@ async fn discovery_sender_task(stack: &'static Stack<'static>) -> ! {
     }
 }
 
-// FOR DEVICE 2 (RESPONDER) - paste-2.txt
+/// Discovery responder - only runs when network is ready
 #[embassy_executor::task]
 async fn discovery_responder_task(stack: &'static Stack<'static>) -> ! {
-    // Wait for network to be ready
-    loop {
-        if stack.is_link_up() {
-            info!("Network link is up, starting discovery responder");
-            break;
-        }
-        embassy_time::Timer::after_millis(100).await;
-    }
-    
-    // Additional delay to ensure network stack is fully ready
-    embassy_time::Timer::after_secs(2).await;
+    wait_for_network_ready(stack).await;
 
     let mut rx_meta = [PacketMetadata::EMPTY; 4];
     let mut rx_buf = [0; 256];
@@ -327,9 +312,17 @@ async fn discovery_responder_task(stack: &'static Stack<'static>) -> ! {
     let mut tx_buf = [0; 256];
 
     let mut socket = UdpSocket::new(*stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
-    
+
+    // Try to get the current IP from stack
+    let current_ip = stack.config_v4().map(|c| c.address.address());
     match socket.bind(DISCOVERY_PORT) {
-        Ok(_) => info!("Discovery responder bound to port {}", DISCOVERY_PORT),
+        Ok(_) => {
+            if let Some(ip) = current_ip {
+                info!("Discovery responder bound to port {} with IP {}", DISCOVERY_PORT, ip);
+            } else {
+                info!("Discovery responder bound to port {} (IP not yet assigned)", DISCOVERY_PORT);
+            }
+        }
         Err(e) => {
             error!("Failed to bind discovery responder: {:?}", e);
         }
@@ -360,9 +353,9 @@ async fn discovery_responder_task(stack: &'static Stack<'static>) -> ! {
     }
 }
 
-// LED Control Task
+/// LED task - works independently of network state
 #[embassy_executor::task]
-async fn led_task(mut led: Output<'static>) -> ! {
+async fn led_task(mut led: Output<'static>, mac_addr: [u8; 6], stack: &'static Stack<'static>) -> ! {
     loop {
         let led_state = LED_SIGNAL.wait().await;
         if led_state {
@@ -372,18 +365,70 @@ async fn led_task(mut led: Output<'static>) -> ! {
             led.set_low();
             info!("LED OFF");
         }
+
+        // MAC and IP are always available, regardless of network state
+        let ip = stack.config_v4().map(|c| c.address.address());
+        if let Some(ip) = ip {
+            defmt::info!(
+                "MAC: {:02X}-{:02X}-{:02X}-{:02X}-{:02X}-{:02X}, IP: {}",
+                mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5],
+                ip
+            );
+        } else {
+            defmt::info!(
+                "MAC: {:02X}-{:02X}-{:02X}-{:02X}-{:02X}-{:02X}, IP: (not assigned)",
+                mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]
+            );
+        }
+
+        // Network status - informational only, doesn't block functionality
+        if stack.is_link_up() {
+            info!("Network link is UP");
+            if let Some(_config) = stack.config_v4() {
+                info!("Network fully configured and ready");
+            } else {
+                info!("Link up but configuration pending");
+            }
+        } else {
+            info!("Network link is DOWN (cable disconnected)");
+        }
+
+        embassy_time::Timer::after_millis(200).await;
     }
 }
 
-/// USB Communication Task
-/// 
-/// - Reads data from USB serial port.
-/// - Writes data to a pipe for the UDP task.
+/// Helper function - waits for network readiness but doesn't block main program
+async fn wait_for_network_ready(stack: &'static Stack<'static>) {
+    info!("Waiting for network to be ready...");
+    
+    // Wait for physical link (cable connected)
+    loop {
+        if stack.is_link_up() {
+            info!("Physical link is up");
+            break;
+        }
+        embassy_time::Timer::after_millis(100).await;
+    }
+    
+    // Wait for IP configuration to be applied
+    loop {
+        if stack.config_v4().is_some() {
+            if let Some(config) = stack.config_v4() {
+                let ip = config.address.address();
+                info!("Network ready with IP: {}", ip);
+                break;
+            }
+        }
+        embassy_time::Timer::after_millis(100).await;
+    }
+}
+
+/// USB task - works independently of network state
 #[embassy_executor::task]
 async fn usb_task(
     mut class: CdcAcmClass<'static, Driver<'static, peripherals::USB_OTG_FS>>,
 ) -> ! {
-    let mut buf  = [0; 512];
+    let mut buf = [0; 512];
     loop {
         info!("Waiting for USB connection");
         class.wait_connection().await;
@@ -402,8 +447,7 @@ async fn usb_task(
                             info!("LED OFF command received");
                             LED_SIGNAL.signal(false);
                         } else {
-                            // Write to pipe (this will block if pipe is full)
-                            // Waits for current data &buf[..n] to be successfully written to the pipe
+                            // Forward to network if available
                             USB_TO_ETH_PIPE.write(&buf[..n]).await;
                         }
                     }
@@ -417,17 +461,10 @@ async fn usb_task(
     }
 }
 
-
-/// UDP Network Task
+/// UDP task - only active when network is ready
 #[embassy_executor::task]
 async fn udp_task(stack: &'static Stack<'static>) -> ! {
-    // Wait for network to be ready
-    loop {
-        if stack.is_link_up() {
-            break;
-        }
-        embassy_time::Timer::after_millis(100).await;
-    }
+    wait_for_network_ready(stack).await;
 
     let mut rx_meta = [PacketMetadata::EMPTY; 16];
     let mut rx_buffer = [0; 1024];
@@ -442,7 +479,6 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
         &mut tx_buffer
     );
 
-    // Use a different port for data forwarding
     match socket.bind(DATA_FORWARDING_PORT + 100) {
         Ok(_) => info!("UDP data forwarding bound to port {}", DATA_FORWARDING_PORT + 100),
         Err(e) => {
@@ -467,12 +503,10 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
     }
 }
 
-
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH, GenericSMI>>) -> ! {
     runner.run().await
 }
-
 
 // =============================================
 //              MAIN
@@ -485,31 +519,37 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
 
-    // Initialize LED (assuming PB0 - adjust pin on board)
+    // Initialize LED - works regardless of network/USB state
     let led = Output::new(p.PB14, Level::Low, Speed::Low);
 
-    // Initialize Hardware
+    // Initialize USB - works independently
     let (class, mut usb) = setup_usb(p.USB_OTG_FS, p.PA12, p.PA11);
+
+    // Generate MAC - always available
+    let mac = generate_mac_from_serial();
     let (stack, runner) = setup_ethernet(
-    p.ETH, p.PA1, p.PA2, p.PC1, p.PA7,
-    p.PC4, p.PC5, p.PG13, p.PB13, p.PG11, p.RNG,
-    [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]
+        p.ETH, p.PA1, p.PA2, p.PC1, p.PA7,
+        p.PC4, p.PC5, p.PG13, p.PB13, p.PG11, p.RNG,
+        mac
     );
     let stack = STACK.init(stack);
 
-    // Spawn Tasks
+    info!("Device initialized with MAC: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", 
+          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    // Spawn all tasks - they handle their own readiness requirements
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
-    spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
+    spawner.spawn(led_task(led, mac, stack)).expect("Failed to spawn LED task");
     spawner.spawn(usb_task(class)).expect("Failed to spawn USB task");
-    spawner.spawn(led_task(led)).expect("Failed to spawn LED task");
 
-    // Sender task
-    spawner.spawn(discovery_sender_task(stack)).expect("Failed to spawn discovery task");
+    // Network-dependent tasks (will wait for network internally)
+    spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
 
-    // Responder task
-    // spawner.spawn(discovery_responder_task(stack)).expect("Failed to spawn discovery task");
+    // Choose one based on device role:
+    // spawner.spawn(discovery_sender_task(stack)).expect("Failed to spawn discovery sender");
+    // OR
+    spawner.spawn(discovery_responder_task(stack)).expect("Failed to spawn discovery responder");
 
-
-    // Run USB Device
+    // USB device runs independently
     usb.run().await;
 }
