@@ -1,151 +1,234 @@
+import os
 import threading
 import socket
 import serial
 import time
-from tkinter import filedialog
+import platform
+import subprocess
 
-# ===== Configuration =====
-MODE = "usb2udp"  # Change to "udp2usb" for the reverse direction
+# ======================================
+# CONFIGURATION
+# ======================================
+MODE = "udp2usb"  # or "usb2udp"
 PORT = 'COM11'
-BAUD = 115200
-UDP_LOOPBACK_PORT = 4321
+BAUD = 12000000
+UDP_IP = '10.42.0.61'
+UDP_LOCAL_IP = '10.42.0.1'
+UDP_PORT = 4321
+
+USB_RECEIVE_FILENAME = "usb_received_image.jpg"
+UDP_RECEIVE_FILENAME = "udp_received_image.jpg"
+
+CHUNK_SIZE = 512  # Common chunk size for both UDP and USB
+ABSOLUTE_TIMEOUT = 30.0
+
+# ======================================
+# UTILS
+# ======================================
+def log(msg):
+    print(f"[LOG] {msg}")
+
+def save_file(path, data: bytes):
+    with open(path, 'wb') as f:
+        f.write(data)
+    log(f"Saved file: {path} ({len(data)} bytes)")
+    open_file(path)  # ← This will open it automatically
+
+def open_file(path):
+    """Opens a file with the default image viewer."""
+    try:
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", path])
+        else:  # Linux and others
+            subprocess.run(["xdg-open", path])
+        log(f"Opened file: {path}")
+    except Exception as e:
+        log(f"Could not open file: {e}")
 
 
-# ===== usb2udp logic (image from laptop to Nucleo) =====
-def receive_udp(usb_done_event):
+# ======================================
+# USB ↔ File
+# ======================================
+def receive_usb(done_event):
+    """Improved USB reception with adaptive timeout and better buffering"""
+    with serial.Serial(PORT, BAUD, timeout=0.0001) as ser:
+        log("USB receiving started...")
+        received = bytearray()
+        chunk_size = 64  # USB endpoint size
+
+        start_time = time.time()
+        last_data_time = start_time
+        consecutive_empty_reads = 0
+        max_empty_reads = 50
+
+        while True:
+            chunk = ser.read(chunk_size)
+            current_time = time.time()
+
+            if chunk:
+                received.extend(chunk)
+                last_data_time = current_time
+                consecutive_empty_reads = 0
+                ser.timeout = 0.000001  # Aggressively flush
+
+                while True:
+                    flush_chunk = ser.read(chunk_size)
+                    if not flush_chunk:
+                        break
+                    received.extend(flush_chunk)
+
+                ser.timeout = 0.0001
+
+            else:
+                consecutive_empty_reads += 1
+                if consecutive_empty_reads >= max_empty_reads:
+                    log(f"USB timeout after {consecutive_empty_reads} empty reads")
+                    break
+                if current_time - last_data_time > 1.0 and len(received) > 0:
+                    log("USB idle timeout reached")
+                    break
+                if current_time - start_time > ABSOLUTE_TIMEOUT:
+                    log("USB absolute timeout reached")
+                    break
+                time.sleep(0.00001)
+
+        if received:
+            save_file(USB_RECEIVE_FILENAME, received)
+        else:
+            log("No USB data received")
+
+    done_event.set()
+
+def send_usb(image_data: bytes, done_event):
+    """Sends image data over USB serial."""
+    try:
+        with serial.Serial(PORT, BAUD, timeout=0) as ser:
+            log(f"Sending {len(image_data)} bytes over USB")
+            for i in range(0, len(image_data), CHUNK_SIZE):
+                ser.write(image_data[i:i+CHUNK_SIZE])
+                if (i // CHUNK_SIZE) % 100 == 0:
+                    log(f"USB sent {i+CHUNK_SIZE} bytes")
+            ser.flush()
+            log("USB sending complete")
+    except Exception as e:
+        log(f"USB send error: {e}")
+    finally:
+        done_event.set()
+
+# ======================================
+# UDP ↔ File
+# ======================================
+def receive_udp(done_event):
+    """Receives UDP packets and writes to a file."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('10.42.0.1', UDP_LOOPBACK_PORT))
-    sock.settimeout(1.0)
-    print(f"[UDP] Listening on port {UDP_LOOPBACK_PORT}...")
+    sock.bind((UDP_LOCAL_IP, UDP_PORT))
+    sock.settimeout(0.0005)
 
-    total_received = 0
-    expected_size = None
-    received_data = bytearray()
-    timeout_after_usb = 2.0
+    received = bytearray()
+    start_time = time.time()
+    last_data_time = start_time
+    consecutive_timeouts = 0
+    max_consecutive_timeouts = 500
 
-    start_wait = None
+    log(f"Listening for UDP on {UDP_LOCAL_IP}:{UDP_PORT}")
 
     while True:
         try:
-            data, addr = sock.recvfrom(4096)
-            if not expected_size:
-                expected_size = int.from_bytes(data[:4], 'big')
-                received_data.extend(data[4:])
-            else:
-                received_data.extend(data)
-
-            total_received = len(received_data)
-            print(f"[UDP] Received {len(data)} bytes (total: {total_received}/{expected_size})")
-
-            start_wait = None
-
-            if total_received >= expected_size:
-                print("[UDP] Received full data.")
-                break
+            data, _ = sock.recvfrom(8192)
+            received.extend(data)
+            last_data_time = time.time()
+            consecutive_timeouts = 0
 
         except socket.timeout:
-            if usb_done_event.is_set():
-                if start_wait is None:
-                    start_wait = time.time()
-                elif time.time() - start_wait > timeout_after_usb:
-                    print("[UDP] Timed out waiting for remaining data.")
-                    break
+            consecutive_timeouts += 1
+            now = time.time()
+            if done_event.is_set() and now - last_data_time > 0.2:
+                log("UDP sender done, exiting receiver")
+                break
+            if consecutive_timeouts > max_consecutive_timeouts:
+                log("UDP timed out from inactivity")
+                break
+            if now - start_time > ABSOLUTE_TIMEOUT:
+                log("UDP absolute timeout")
+                break
+            time.sleep(0.00001)
 
     sock.close()
-
-    output_path = "received_image.jpg"
-    with open(output_path, 'wb') as f:
-        f.write(received_data)
-    print(f"[UDP] Image saved to {output_path} ({len(received_data)} bytes received)")
-
-
-def send_usb(image_data: bytes, usb_done_event):
-    with serial.Serial(PORT, BAUD, timeout=2) as ser:
-        print(f"[USB] Connected to {PORT}")
-        ser.write(len(image_data).to_bytes(4, 'big'))
-        ser.write(image_data)
-
-    usb_done_event.set()  # Notify UDP thread
-
-
-# ===== udp2usb logic (image from UDP to laptop over USB) =====
-def receive_usb(usb_done_event, expected_size):
-    with serial.Serial(PORT, BAUD, timeout=2) as ser:
-        print(f"[USB] Waiting for {expected_size} bytes over USB...")
-        
-        received = bytearray()
-        start = time.time()
-        while len(received) < expected_size and (time.time() - start) < 10:
-            to_read = min(64, expected_size - len(received))
-            chunk = ser.read(to_read)
-            if chunk:
-                received.extend(chunk)
-                print(f"[USB] Received {len(received)}/{expected_size} bytes")
-
-        with open("usb_received_image.jpg", "wb") as f:
-            f.write(received)
-
-        if len(received) == expected_size:
-            print("[USB] Image saved as 'usb_received_image.jpg' (complete)")
-        else:
-            print(f"[USB] Incomplete image saved (got {len(received)} / {expected_size})")
-
-    usb_done_event.set()
-
-
+    if received:
+        save_file(UDP_RECEIVE_FILENAME, received)
+    else:
+        log("No UDP data received")
 
 def send_udp(image_data: bytes):
+    """Improved UDP sending with adaptive pacing."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    remote = ('10.42.0.61', UDP_LOOPBACK_PORT)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
 
-    sock.sendto(len(image_data).to_bytes(4, 'big') + image_data[:508], remote)
-    for i in range(508, len(image_data), 512):
-        chunk = image_data[i:i+512]
-        sock.sendto(chunk, remote)
-        time.sleep(0.001)
+    remote = (UDP_IP, UDP_PORT)
+    total_chunks = (len(image_data) + CHUNK_SIZE - 1) // CHUNK_SIZE
+    log(f"Sending {len(image_data)} bytes via UDP in {total_chunks} chunks")
+
+    for i in range(0, len(image_data), CHUNK_SIZE):
+        chunk = image_data[i:i+CHUNK_SIZE]
+        chunk_num = i // CHUNK_SIZE + 1
+        try:
+            sock.sendto(chunk, remote)
+            if chunk_num <= 10:
+                time.sleep(0.001)
+            elif chunk_num <= 100:
+                time.sleep(0.0005)
+            else:
+                time.sleep(0.0001)
+            if chunk_num % 100 == 0 or chunk_num == total_chunks:
+                log(f"Sent chunk {chunk_num}/{total_chunks}")
+        except Exception as e:
+            log(f"UDP send error @ chunk {chunk_num}: {e}")
+            time.sleep(0.01)
 
     sock.close()
-    print("[UDP] Sent image to Nucleo over UDP.")
+    log("UDP sending complete")
 
 
-# ===== Main Logic =====
-if __name__ == "__main__":
+# ======================================
+# MAIN
+# ======================================
+def main():
     usb_done_event = threading.Event()
 
-    if MODE == "usb2udp":
-        image_path = filedialog.askopenfilename(title="Select image")
-        if not image_path:
-            print("No image selected.")
-            exit()
+    # Change this to your fixed image path
+    image_path = os.path.join(os.path.dirname(__file__), 'test_image.jpg')
+    MODE = input("Enter mode (1 / 2) for USB2UDP or UDP2USB: ")
 
-        with open(image_path, 'rb') as f:
-            image_data = f.read()
-        print(f"Loaded {len(image_data)} bytes from {image_path}")
+    if not os.path.isfile(image_path):
+        log(f"Image not found at: {image_path}")
+        return
 
-        udp_thread = threading.Thread(target=receive_udp, args=(usb_done_event,), daemon=True)
+    with open(image_path, 'rb') as f:
+        image_data = f.read()
+    log(f"Loaded image ({len(image_data)} bytes)")
+
+    if MODE == "1":
+        udp_thread = threading.Thread(target=receive_udp, args=(usb_done_event,))
         udp_thread.start()
 
         send_usb(image_data, usb_done_event)
         udp_thread.join()
 
-    elif MODE == "udp2usb":
-        image_path = filedialog.askopenfilename(title="Select image to send over UDP")
-        if not image_path:
-            print("No image selected.")
-            exit()
-
-        with open(image_path, 'rb') as f:
-            image_data = f.read()
-        print(f"Loaded {len(image_data)} bytes from {image_path}")
-
-        usb_thread = threading.Thread(target=receive_usb, args=(usb_done_event, len(image_data)), daemon=True)
+    elif MODE == "2":
+        usb_thread = threading.Thread(target=receive_usb, args=(usb_done_event,))
         usb_thread.start()
 
+        time.sleep(0.1)  # Let USB read get ready
         send_udp(image_data)
-
         usb_thread.join()
 
     else:
-        print("Invalid MODE. Use 'usb2udp' or 'udp2usb'.")
+        log("Invalid MODE. Choose '1' or '2'.")
 
-    print("Done.")
+    log("Transfer complete.")
+
+
+if __name__ == "__main__":
+    main()

@@ -54,11 +54,13 @@ const NETWORK_UDP_PORT: u16 = 4321;
 
 // --- Buffers ---
 const USB_BUFFER_SIZE: usize = 1024;
+const NETWORK_RX_BUFFER_SIZE: usize = 1024;
 
 
 // Ensure buffers meet minimum requirements
 fn validate_config() {
     assert!(USB_BUFFER_SIZE >= 64, "USB_BUFFER_SIZE must be at least 64");
+    assert!(NETWORK_RX_BUFFER_SIZE >= 512, "NETWORK_RX_BUFFER_SIZE must be at least 512");
 }
 
 
