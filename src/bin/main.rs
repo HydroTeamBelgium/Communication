@@ -1,3 +1,4 @@
+// version compatible with USP_TO_UDP.py and DEMO1.py (with usb) == slow
 #![no_std]
 #![no_main]
 

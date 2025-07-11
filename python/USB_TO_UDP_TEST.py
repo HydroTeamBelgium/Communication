@@ -1,3 +1,4 @@
+#initial test that can send and receive to the nucleo over either udp2usb or usb2udp
 import os
 import threading
 import socket
@@ -21,13 +22,6 @@ UDP_RECEIVE_FILENAME = "udp_received_image.jpg"
 
 CHUNK_SIZE = 512  # Common chunk size for both UDP and USB
 ABSOLUTE_TIMEOUT = 30.0
-
-
-# Python struct format: '<' (little-endian), 'I' (uint32), 'H' (uint16)
-HEADER_FORMAT = '<4sIHHI'  # Magic (4B) + FrameNum (4B) + Width (2B) + Height (2B) + Size (4B)
-HEADER_SIZE = 16  # bytes
-FOOTER_MAGIC = b'END!'
-
 
 # ======================================
 # UTILS
@@ -53,25 +47,6 @@ def open_file(path):
         log(f"Opened file: {path}")
     except Exception as e:
         log(f"Could not open file: {e}")
-
-def pack_frame_header(frame_num: int, width: int, height: int, payload_size: int) -> bytes:
-    import struct
-    return struct.pack(HEADER_FORMAT, b'IMGF', frame_num, width, height, payload_size)
-
-def send_image_with_metadata(image_data: bytes, frame_num=0, mode="udp"):
-    # Example: Assume image is 640x480 JPEG
-    width, height = 640, 480
-    header = pack_frame_header(frame_num, width, height, len(image_data))
-    footer = FOOTER_MAGIC  # Optional
-    
-    # Combine header + image + footer
-    full_frame = header + image_data + footer
-    
-    if mode == "udp":
-        send_udp(full_frame)  # Reuse your existing function
-    else:
-        send_usb(full_frame)
-
 
 # ======================================
 # USB ↔ File
@@ -224,7 +199,7 @@ def main():
 
     # Change this to your fixed image path
     image_path = os.path.join(os.path.dirname(__file__), 'test_image.jpg')
-    MODE = input("Enter mode (1 / 2) for USB2UDP or UDP2USB: ")
+    MODE = "2"
 
     if not os.path.isfile(image_path):
         log(f"Image not found at: {image_path}")

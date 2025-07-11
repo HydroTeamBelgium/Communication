@@ -30,7 +30,7 @@ pub const USB_BUFFER_SIZE: usize = 1024;
 
 // Inter-task Communication
 pub static USB_TO_ETH_PIPE: Pipe<ThreadModeRawMutex, 4096> = Pipe::new();
-pub static ETH_TO_USB_PIPE: Pipe<ThreadModeRawMutex, 131072> = Pipe::new();
+pub static ETH_TO_USB_PIPE: Pipe<ThreadModeRawMutex, 16384> = Pipe::new();
 
 // Hardware Shared Data
 #[link_section = ".ram_d3.shared_data"]

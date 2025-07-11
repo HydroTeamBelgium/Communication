@@ -1,3 +1,5 @@
+#demo for two nucleo's connected via ethernet, and two laptops each connected to a nucleo
+#sends an image
 import os
 import threading
 import serial
