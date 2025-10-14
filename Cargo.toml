@@ -1,17 +1,20 @@
 [package]
 name = "basis"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 
 
 [dependencies]
 # Embassy async runtime and HAL
-embassy-executor = { version = "0.6.3", features = ["arch-cortex-m", "executor-thread", "defmt", "integrated-timers"] }
-embassy-stm32 = { version = "0.1.0", features = ["stm32h755zi-cm7", "time-driver-any", "defmt", "memory-x"] }
-embassy-time = { version = "0.3.2", features = ["defmt"] }
+embassy-executor = { version = "0.7.0", features = ["arch-cortex-m", "executor-thread", "defmt"] }
+embassy-stm32    = { version = "0.2.0", features = ["stm32h755zi-cm7", "time-driver-any", "defmt", "memory-x"] }
+embassy-time     = { version = "0.4.0", features = ["defmt"] }
+embassy-net      = { version = "0.6.0", features = ["defmt", "proto-ipv4", "medium-ethernet", "udp", "dhcpv4"] }
+
+leasehund        = "0.2.0"
 
 # Async support
-embassy-sync = { version = "0.6.1" }
+embassy-sync     = { version = "0.6.0" }
 
 # Core embedded dependencies
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
