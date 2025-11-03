@@ -1,0 +1,10 @@
+C:\Users\elias\Documents\hydro\Communication1\target\thumbv7em-none-eabihf\release\deps\futures_task-be37dff68aac6f66.d: C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\lib.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\spawn.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\future_obj.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\noop_waker.rs
+
+C:\Users\elias\Documents\hydro\Communication1\target\thumbv7em-none-eabihf\release\deps\libfutures_task-be37dff68aac6f66.rlib: C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\lib.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\spawn.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\future_obj.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\noop_waker.rs
+
+C:\Users\elias\Documents\hydro\Communication1\target\thumbv7em-none-eabihf\release\deps\libfutures_task-be37dff68aac6f66.rmeta: C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\lib.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\spawn.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\future_obj.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\noop_waker.rs
+
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\lib.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\spawn.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\future_obj.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-task-0.3.31\src\noop_waker.rs:

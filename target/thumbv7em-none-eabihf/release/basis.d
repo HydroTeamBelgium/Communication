@@ -1,0 +1,1 @@
+C:\Users\elias\Documents\hydro\Communication1\target\thumbv7em-none-eabihf\release\basis: C:\Users\elias\Documents\hydro\Communication1\build.rs C:\Users\elias\Documents\hydro\Communication1\memory.x C:\Users\elias\Documents\hydro\Communication1\src\main.rs

@@ -1,0 +1,14 @@
+C:\Users\elias\Documents\hydro\Communication1\target\release\deps\thiserror-35b03aeaffbb5356.d: C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\lib.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\aserror.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\display.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\var.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\private.rs C:\Users\elias\Documents\hydro\Communication1\target\release\build\thiserror-044a7d56e80c6ec0\out/private.rs
+
+C:\Users\elias\Documents\hydro\Communication1\target\release\deps\libthiserror-35b03aeaffbb5356.rlib: C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\lib.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\aserror.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\display.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\var.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\private.rs C:\Users\elias\Documents\hydro\Communication1\target\release\build\thiserror-044a7d56e80c6ec0\out/private.rs
+
+C:\Users\elias\Documents\hydro\Communication1\target\release\deps\libthiserror-35b03aeaffbb5356.rmeta: C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\lib.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\aserror.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\display.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\var.rs C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\private.rs C:\Users\elias\Documents\hydro\Communication1\target\release\build\thiserror-044a7d56e80c6ec0\out/private.rs
+
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\lib.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\aserror.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\display.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\var.rs:
+C:\Users\elias\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.17\src\private.rs:
+C:\Users\elias\Documents\hydro\Communication1\target\release\build\thiserror-044a7d56e80c6ec0\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\elias\\Documents\\hydro\\Communication1\\target\\release\\build\\thiserror-044a7d56e80c6ec0\\out

@@ -1,8 +1,0 @@
-target
-target_ci
-target_ci_stable
-out/
-# editor artifacts
-.zed
-.neoconf.json
-*.vim

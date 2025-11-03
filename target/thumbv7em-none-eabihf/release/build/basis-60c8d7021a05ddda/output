@@ -1,0 +1,5 @@
+cargo:rustc-link-search=C:\Users\elias\Documents\hydro\Communication1\target\thumbv7em-none-eabihf\release\build\basis-60c8d7021a05ddda\out
+cargo:rerun-if-changed=memory.x
+cargo:rustc-link-arg-bins=--nmagic
+cargo:rustc-link-arg-bins=-Tlink.x
+cargo:rustc-link-arg-bins=-Tdefmt.x
