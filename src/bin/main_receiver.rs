@@ -163,7 +163,7 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
     // let mut led = Output::new(p.PE1, Level::High, Speed::Low);
-    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0x60];
 
     let device = Ethernet::new(
         PACKETS.init(PacketQueue::<8, 8>::new()),

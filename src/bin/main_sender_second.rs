@@ -164,14 +164,15 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
         Ok(_) => info!("data is sent"),
         Err(_) => warn!("data isn't sent"),
     }
-    let data = CHANNEL.receive().await;
-    match socket.send_to(data, endpoint).await {
-        Ok(_) => {match core::str::from_utf8(data) {
-                    Ok(s) => info!("UDP sent: {}", s),
-                    Err(_) => info!("UDP sent: (non-UTF8 data)")}},
-        Err(e) => warn!("UDP send error: {:?}", e),
+    loop {
+        let data = CHANNEL.receive().await;
+        match socket.send_to(data, endpoint).await {
+            Ok(_) => {match core::str::from_utf8(data) {
+                        Ok(s) => info!("UDP sent: {}", s),
+                        Err(_) => info!("UDP sent: (non-UTF8 data)")}},
+            Err(e) => warn!("UDP send error: {:?}", e),
+        }
     }
-        
 }
 
 
@@ -202,7 +203,7 @@ async fn main(spawner: Spawner) {
     info!("blabla");
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
     let button = ExtiInput::new(p.PC13, p.EXTI13, Pull::Down);
-    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+    let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0x62];
 
     let device = Ethernet::new(
         PACKETS.init(PacketQueue::<8, 8>::new()),
