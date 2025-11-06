@@ -134,7 +134,10 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
             Ok((n, sender)) => {
                 info!("Received {} bytes from {}", n, sender);            
                 info!("Data (raw): {:x}", &rx_buf[..n]);
-            }
+                match core::str::from_utf8(&rx_buf[..n]) {
+                    Ok(s) => info!("UDP sent: {}", s),
+                    Err(_) => info!("UDP sent: (non-UTF8 data)")}
+            },
             Err(e) => {
                 warn!("UDP receive error: {:?}", e);
             }

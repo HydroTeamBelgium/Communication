@@ -1,8 +1,8 @@
-// version compatible with udp_image.py (no usb and expects udp frame with header for destination)
 #![no_std]
 #![no_main]
 
 use defmt_rtt as _;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use panic_probe as _;
 use rand_core::RngCore;
 use embassy_executor::Spawner;
@@ -15,6 +15,8 @@ use embassy_net::{
     Stack
 };
 use embassy_stm32::{
+    exti::ExtiInput,
+    gpio::Pull,
     eth::{Ethernet, PacketQueue, GenericPhy},
     eth,
     rng::{Rng, InterruptHandler as RngInterruptHandler},
@@ -70,6 +72,8 @@ static PACKETS: StaticCell<PacketQueue<8, 8>> = StaticCell::new();
 static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
+// Shared channel for messages from button_task to udp_task
+static CHANNEL: Channel<CriticalSectionRawMutex, &'static [u8], 4> = Channel::new();
 
 // Hardware Shared Data
 #[unsafe(link_section = ".ram_d3.shared_data")]
@@ -139,7 +143,7 @@ fn configure_clock(config: &mut Config) {
 /// - Forwards the rest of the data to the destination.
 /// - If dst_ip == sender_ip, behaves like echo.
 #[embassy_executor::task]
-async fn udp_task(stack: &'static Stack<'static>) -> ! {
+async fn udp_task(stack: &'static Stack<'static>) -> () {
     let mut rx_meta = [PacketMetadata::EMPTY; RX_METADATA_COUNT];
     let mut rx_buffer = [0; RX_BUFFER_SIZE];
     let mut tx_meta = [PacketMetadata::EMPTY; TX_METADATA_COUNT];
@@ -156,43 +160,18 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
     socket.bind(NETWORK_UDP_PORT).unwrap();
     let data = b"koekoek";
     let endpoint = IpEndpoint::new(DESTINATION_IP.into(), DESTINATION_PORT);
-    let mut rx_buf = [0u8; MAX_PACKET_SIZE];
     match socket.send_to(data, endpoint).await {
         Ok(_) => info!("data is sent"),
         Err(_) => warn!("data isn't sent"),
     }
-    loop {
-        match socket.recv_from(&mut rx_buf).await {
-            Ok((n, sender)) => {
-                if n < 6 {
-                    warn!("Packet too short: {}", n);
-                    continue;
-                }
-
-                // Extract destination IP
-                let dst_ip = Ipv4Address::new(rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
-                let dst_port = u16::from_be_bytes([rx_buf[4], rx_buf[5]]);
-                let payload = &rx_buf[6..n];
-
-                let dest = IpEndpoint::new(dst_ip.into(), dst_port);
-
-                info!(
-                    "Forwarding {} bytes from {} to {}",
-                    payload.len(),
-                    sender,
-                    dest
-                );
-
-                match socket.send_to(payload, dest).await {
-                    Ok(_) => info!("UDP forward successful"),
-                    Err(e) => warn!("UDP send error: {:?}", e),
-                }
-            }
-            Err(e) => {
-                warn!("UDP receive error: {:?}", e);
-            }
-        }
+    let data = CHANNEL.receive().await;
+    match socket.send_to(data, endpoint).await {
+        Ok(_) => {match core::str::from_utf8(data) {
+                    Ok(s) => info!("UDP sent: {}", s),
+                    Err(_) => info!("UDP sent: (non-UTF8 data)")}},
+        Err(e) => warn!("UDP send error: {:?}", e),
     }
+        
 }
 
 
@@ -201,6 +180,16 @@ async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH
     runner.run().await
 }
 
+#[embassy_executor::task]
+async fn button_task(mut button: ExtiInput<'static>) -> ! {
+    loop {
+        button.wait_for_rising_edge().await;
+        info!("Pressed!");
+        CHANNEL.send(b"button 2 pressed").await;
+        button.wait_for_falling_edge().await;
+        info!("Released!");
+    }
+}
 
 // =============================================
 //              MAIN
@@ -212,6 +201,7 @@ async fn main(spawner: Spawner) {
     configure_clock(&mut config);
     info!("blabla");
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
+    let button = ExtiInput::new(p.PC13, p.EXTI13, Pull::Down);
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
 
     let device = Ethernet::new(
@@ -241,5 +231,6 @@ async fn main(spawner: Spawner) {
     // Spawn Tasks
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
     spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
+    spawner.spawn(button_task(button)).expect("Failed to spawn button task");
 
 }
