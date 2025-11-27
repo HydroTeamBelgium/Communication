@@ -49,12 +49,19 @@ async fn main(_spawner: Spawner) {
     info!("Hello World!");
     let mut adc = Adc::new(p.ADC2);
     let mut vrefint_channel = adc.enable_vrefint();
+    const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E860 as *const u16;
+    let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
+    info!("vrefint_cal: {}", vrefint_cal);
+
 
     loop {
+        
         let vrefint = adc.blocking_read(&mut vrefint_channel);
         info!("vrefint: {}", vrefint);
-        let measured = adc.blocking_read(&mut p.PB1);
-        info!("measured: {}", measured);
+        let measured = adc.blocking_read(&mut p.PA3);
+        let vdda = 0.33 * vrefint_cal as f32 / vrefint as f32;
+        let voltage = (measured as f32 / 16383.0) * vdda;
+        info!("measured, voltage : {} {}", measured, voltage);
         Timer::after_millis(500).await;
     }
 }
