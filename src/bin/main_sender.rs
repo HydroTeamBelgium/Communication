@@ -15,18 +15,7 @@ use embassy_net::{
     Stack
 };
 use embassy_stm32::{
-    exti::ExtiInput,
-    gpio::Pull,
-    eth::{Ethernet, PacketQueue, GenericPhy},
-    eth,
-    rng::{Rng, InterruptHandler as RngInterruptHandler},
-    peripherals::ETH,
-    bind_interrupts,
-    SharedData,
-    peripherals,
-
-    Config,
-    rcc::*,
+    Config, Peri, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH, PA3}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
 };
 
 use static_cell::StaticCell;
@@ -166,12 +155,12 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
     }
     
     loop {
-    let data = CHANNEL.receive().await;
-    match socket.send_to(data, endpoint).await {
-        Ok(_) => {match core::str::from_utf8(data) {
-                    Ok(s) => info!("UDP sent: {}", s),
-                    Err(_) => info!("UDP sent: (non-UTF8 data)")}},
-        Err(e) => warn!("UDP send error: {:?}", e),
+        let data = CHANNEL.receive().await;
+        match socket.send_to(data, endpoint).await {
+            Ok(_) => {match core::str::from_utf8(data) {
+                        Ok(s) => info!("UDP sent: {}", s),
+                        Err(_) => info!("UDP sent: (non-UTF8 data)")}},
+            Err(e) => warn!("UDP send error: {:?}", e),
     }
     }  
 }
@@ -184,6 +173,17 @@ async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH
 
 #[embassy_executor::task]
 async fn button_task(mut button: ExtiInput<'static>) -> ! {
+    loop {
+        button.wait_for_rising_edge().await;
+        info!("Pressed!");
+        CHANNEL.send(b"button 1 pressed").await;
+        button.wait_for_falling_edge().await;
+        info!("Released!");
+    }
+}
+
+#[embassy_executor::task]
+async fn pot_task(mut pin: Peri<'static, peripherals::PA3>) -> ! {
     loop {
         button.wait_for_rising_edge().await;
         info!("Pressed!");
@@ -215,6 +215,7 @@ async fn main(spawner: Spawner) {
         GenericPhy::new_auto(),
         mac_addr,
 );
+    let pin: Peri<'static, peripherals::PA3> = p.PA3;
 
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
         address: Ipv4Cidr::new(NETWORK_LOCAL_IP, 24),
@@ -234,5 +235,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
     spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
     spawner.spawn(button_task(button)).expect("Failed to spawn button task");
+    spawner.spawn(pot_task(pin)).expect("Failed to spawn potentiometer task")
 
 }
