@@ -15,8 +15,14 @@ use embassy_net::{
     Stack
 };
 use embassy_stm32::{
+<<<<<<< HEAD
     Config, Peri, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH, PA3}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
+=======
+    Peri, Config, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
+>>>>>>> aadd237f9505662a00f0d844bb8d8a84291a15e5
 };
+use embassy_stm32::adc::{Adc, Instance};
+use embassy_time::{Timer};
 
 use static_cell::StaticCell;
 use defmt::{*, assert};
@@ -182,6 +188,7 @@ async fn button_task(mut button: ExtiInput<'static>) -> ! {
     }
 }
 
+<<<<<<< HEAD
 #[embassy_executor::task]
 async fn pot_task(mut pin: Peri<'static, peripherals::PA3>) -> ! {
     loop {
@@ -193,6 +200,23 @@ async fn pot_task(mut pin: Peri<'static, peripherals::PA3>) -> ! {
     }
 }
 
+=======
+
+#[embassy_executor::task]
+async fn pot_task<T>(mut adc: Adc<'_,T>, pin: Peri<'static, peripherals::PA3>) -> ! {
+    let mut vrefint_channel = adc.enable_vrefint();
+    const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E820 as *const u16;
+    let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
+
+    loop {
+        let measured = adc.blocking_read(&mut pin);
+        let bytes = measured.to_le_bytes();
+        CHANNEL.send(&bytes).await;
+        info!("measured: {}", measured);
+        Timer::after_millis(500).await;
+    }
+}
+>>>>>>> aadd237f9505662a00f0d844bb8d8a84291a15e5
 // =============================================
 //              MAIN
 // =============================================
@@ -205,6 +229,8 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
     let button = ExtiInput::new(p.PC13, p.EXTI13, Pull::Down);
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0x61];
+    let adc = Adc::new(p.ADC2);
+
 
     let device = Ethernet::new(
         PACKETS.init(PacketQueue::<8, 8>::new()),
@@ -235,6 +261,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
     spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
     spawner.spawn(button_task(button)).expect("Failed to spawn button task");
+<<<<<<< HEAD
     spawner.spawn(pot_task(pin)).expect("Failed to spawn potentiometer task")
+=======
+    spawner.spawn(pot_task(adc, p.PA3)).expect("Failed to spawn pot task");
+>>>>>>> aadd237f9505662a00f0d844bb8d8a84291a15e5
 
 }

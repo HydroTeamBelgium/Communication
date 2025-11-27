@@ -1,5 +1,7 @@
 [target.thumbv7em-none-eabihf]
 runner = 'probe-rs run --chip STM32H755ZITx --catch-hardfault --always-print-stacktrace' 
+#runner = 'probe-rs run --chip STM32H755ZITx --chip-erase --catch-hardfault --always-print-stacktrace' 
+
 
 [build]
 target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)
