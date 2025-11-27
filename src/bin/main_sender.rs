@@ -15,18 +15,14 @@ use embassy_net::{
     Stack
 };
 use embassy_stm32::{
-<<<<<<< HEAD
-    Config, Peri, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH, PA3}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
-=======
-    Peri, Config, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
->>>>>>> aadd237f9505662a00f0d844bb8d8a84291a15e5
+    Config, Peri, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
 };
-use embassy_stm32::adc::{Adc, Instance};
+use embassy_stm32::adc::{Adc};
 use embassy_time::{Timer};
 
 use static_cell::StaticCell;
 use defmt::{*, assert};
-use core::mem::MaybeUninit;
+use core::{mem::MaybeUninit};
 
 // =============================================
 //              CONFIGURATION
@@ -58,6 +54,11 @@ fn validate_config() {
     assert!(TX_BUFFER_SIZE >= MAX_PACKET_SIZE, "TX buffer too small");
 }
 
+#[derive(Copy, Clone)]
+pub struct PotReading {
+    pub measured: u16,
+    pub voltage: f32,
+}
 
 // =============================================
 //              STATIC ALLOCATIONS
@@ -69,6 +70,8 @@ static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 // Shared channel for messages from button_task to udp_task
 static CHANNEL: Channel<CriticalSectionRawMutex, &'static [u8], 4> = Channel::new();
+// potential readings
+static CHANNEL_POT: Channel<CriticalSectionRawMutex, PotReading, 4> = Channel::new();
 
 // Hardware Shared Data
 #[unsafe(link_section = ".ram_d3.shared_data")]
@@ -188,35 +191,24 @@ async fn button_task(mut button: ExtiInput<'static>) -> ! {
     }
 }
 
-<<<<<<< HEAD
 #[embassy_executor::task]
-async fn pot_task(mut pin: Peri<'static, peripherals::PA3>) -> ! {
-    loop {
-        button.wait_for_rising_edge().await;
-        info!("Pressed!");
-        CHANNEL.send(b"button 1 pressed").await;
-        button.wait_for_falling_edge().await;
-        info!("Released!");
-    }
-}
-
-=======
-
-#[embassy_executor::task]
-async fn pot_task<T>(mut adc: Adc<'_,T>, pin: Peri<'static, peripherals::PA3>) -> ! {
+async fn pot_task(mut adc: Adc<'static, peripherals::ADC2>, mut pin: Peri<'static, peripherals::PA3>) -> ! {
     let mut vrefint_channel = adc.enable_vrefint();
-    const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E820 as *const u16;
+    const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E860 as *const u16;
     let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
-
     loop {
+        let vrefint = adc.blocking_read(&mut vrefint_channel);
+        info!("vrefint: {}", vrefint);
         let measured = adc.blocking_read(&mut pin);
-        let bytes = measured.to_le_bytes();
-        CHANNEL.send(&bytes).await;
-        info!("measured: {}", measured);
+        let vdda = 0.33 * vrefint_cal as f32 / vrefint as f32;
+        let voltage = (measured as f32 / 16383.0) * vdda;
+        info!("measured, voltage : {} {}", measured, voltage);
         Timer::after_millis(500).await;
+        CHANNEL_POT.send(PotReading { measured, voltage }).await;
+
     }
 }
->>>>>>> aadd237f9505662a00f0d844bb8d8a84291a15e5
+
 // =============================================
 //              MAIN
 // =============================================
@@ -229,7 +221,6 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
     let button = ExtiInput::new(p.PC13, p.EXTI13, Pull::Down);
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0x61];
-    let adc = Adc::new(p.ADC2);
 
 
     let device = Ethernet::new(
@@ -256,15 +247,12 @@ async fn main(spawner: Spawner) {
 
     let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
     let stack = STACK.init(stack);
+    let adc = Adc::new(p.ADC2);
 
     // Spawn Tasks
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
     spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
     spawner.spawn(button_task(button)).expect("Failed to spawn button task");
-<<<<<<< HEAD
-    spawner.spawn(pot_task(pin)).expect("Failed to spawn potentiometer task")
-=======
-    spawner.spawn(pot_task(adc, p.PA3)).expect("Failed to spawn pot task");
->>>>>>> aadd237f9505662a00f0d844bb8d8a84291a15e5
+    spawner.spawn(pot_task(adc, pin)).expect("Failed to spawn potentiometer task")
 
 }
