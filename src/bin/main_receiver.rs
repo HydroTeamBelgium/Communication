@@ -140,7 +140,7 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
                         info!("UDP received: {} from {} {}", s, sender, counter);
                         counter += 1;
                     },
-                    Err(_) => info!("UDP sent: (non-UTF8 data)")}
+                    Err(_) => info!("UDP sent: {} (non-UTF8 data)", &rx_buf[..n])}
             },
             Err(e) => {
                 warn!("UDP receive error: {:?}", e);

@@ -60,6 +60,12 @@ pub struct PotReading {
     pub voltage: f32,
 }
 
+#[derive(Copy, Clone)]
+pub enum Message {
+    Bytes([u8; 16]),
+    Pot(PotReading),
+}
+
 // =============================================
 //              STATIC ALLOCATIONS
 // =============================================
@@ -69,9 +75,7 @@ static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 // Shared channel for messages from button_task to udp_task
-static CHANNEL: Channel<CriticalSectionRawMutex, &'static [u8], 4> = Channel::new();
-// potential readings
-static CHANNEL_POT: Channel<CriticalSectionRawMutex, PotReading, 4> = Channel::new();
+static CHANNEL: Channel<CriticalSectionRawMutex, Message, 4> = Channel::new();
 
 // Hardware Shared Data
 #[unsafe(link_section = ".ram_d3.shared_data")]
@@ -164,14 +168,31 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
     }
     
     loop {
+        
         let data = CHANNEL.receive().await;
-        match socket.send_to(data, endpoint).await {
-            Ok(_) => {match core::str::from_utf8(data) {
-                        Ok(s) => info!("UDP sent: {}", s),
-                        Err(_) => info!("UDP sent: (non-UTF8 data)")}},
-            Err(e) => warn!("UDP send error: {:?}", e),
-    }
-    }  
+        match data {
+            Message::Pot(p) => { 
+                let voltage = &p.voltage.to_bits().to_be_bytes();
+                match socket.send_to(voltage, endpoint).await {
+                    // Ok(_) => {match core::str::from_utf8(&buf) {
+                            Ok(s) => info!("UDP sent: {}", s),
+                            Err(_) => info!("UDP sent: (non-UTF8 data)")
+                    }
+                // Err(e) => warn!("UDP send error: {:?}", e),
+                }
+                /* use p.measured, p.voltage */ 
+            Message::Bytes(buf) => { 
+                match socket.send_to(&buf, endpoint).await {
+                Ok(_) => {match core::str::from_utf8(&buf) {
+                            Ok(s) => info!("UDP sent: {}", s),
+                            Err(_) => info!("UDP sent: (non-UTF8 data)")}},
+                Err(e) => warn!("UDP send error: {:?}", e),
+                }
+            }
+            }
+        }
+        
+  
 }
 
 
@@ -185,7 +206,7 @@ async fn button_task(mut button: ExtiInput<'static>) -> ! {
     loop {
         button.wait_for_rising_edge().await;
         info!("Pressed!");
-        CHANNEL.send(b"button 1 pressed").await;
+        CHANNEL.send(Message::Bytes(*b"button 1 pressed")).await;
         button.wait_for_falling_edge().await;
         info!("Released!");
     }
@@ -204,7 +225,7 @@ async fn pot_task(mut adc: Adc<'static, peripherals::ADC2>, mut pin: Peri<'stati
         let voltage = (measured as f32 / 16383.0) * vdda;
         info!("measured, voltage : {} {}", measured, voltage);
         Timer::after_millis(500).await;
-        CHANNEL_POT.send(PotReading { measured, voltage }).await;
+        CHANNEL.send(Message::Pot(PotReading { measured, voltage })).await;
 
     }
 }
