@@ -113,6 +113,7 @@ fn configure_clock(config: &mut Config) {
 /// - If dst_ip == sender_ip, behaves like echo.
 #[embassy_executor::task]
 async fn udp_task(stack: &'static Stack<'static>) -> ! {
+    let mut counter: u32 = 0;
     let mut rx_meta = [PacketMetadata::EMPTY; RX_METADATA_COUNT];
     let mut rx_buffer = [0; RX_BUFFER_SIZE];
     let mut tx_meta = [PacketMetadata::EMPTY; TX_METADATA_COUNT];
@@ -132,10 +133,13 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
     loop {
         match socket.recv_from(&mut rx_buf).await {
             Ok((n, sender)) => {
-                info!("Received {} bytes from {}", n, sender);            
-                info!("Data (raw): {:x}", &rx_buf[..n]);
+                //info!("Received {} bytes from {}", n, sender);            
+                //info!("Data (raw): {:x}", &rx_buf[..n]);
                 match core::str::from_utf8(&rx_buf[..n]) {
-                    Ok(s) => info!("UDP sent: {}", s),
+                    Ok(s) => {
+                        info!("UDP received: {} from {} {}", s, sender, counter);
+                        counter += 1;
+                    },
                     Err(_) => info!("UDP sent: (non-UTF8 data)")}
             },
             Err(e) => {
