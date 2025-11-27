@@ -55,6 +55,12 @@ fn validate_config() {
     assert!(TX_BUFFER_SIZE >= MAX_PACKET_SIZE, "TX buffer too small");
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum MessageType {
+    Bytes = 0x01,
+    Pot   = 0x02,
+}
 
 // =============================================
 //              STATIC ALLOCATIONS
@@ -132,23 +138,29 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
 
     loop {
         match socket.recv_from(&mut rx_buf).await {
+            
             Ok((n, sender)) => {
-                //info!("Received {} bytes from {}", n, sender);            
-                //info!("Data (raw): {:x}", &rx_buf[..n]);
-                match core::str::from_utf8(&rx_buf[..n]) {
-                    Ok(s) => {
-                        info!("UDP received: {} from {} {}", s, sender, counter);
-                        counter += 1;
-                    },
-                    Err(_) => info!("UDP sent: {} (non-UTF8 data)", &rx_buf[..n])}
-            },
+                match rx_buf[0] {
+                    x if x == MessageType::Bytes as u8 => {
+                        match core::str::from_utf8(&rx_buf[..n]) {
+                            Ok(s) => {
+                            info!("UDP received: {} from {} {}", s, sender, counter);
+                            counter += 1;}
+                            Err(_) => info!("UDP received (non-UTF8 data)")
+                        }}
+                    x if x == MessageType::Pot as u8 => {
+                        let voltage = f32::from_bits(u32::from_be_bytes([rx_buf[3], rx_buf[4], rx_buf[5], rx_buf[6]]));
+                        info!("Received PotReading: {} V", voltage);
+                    }
+                    _ => warn!("Unknown message type"),
+                }
+            }
             Err(e) => {
                 warn!("UDP receive error: {:?}", e);
             }
         }
     }
 }
-
 
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH, GenericPhy>>) -> ! {
@@ -166,7 +178,6 @@ async fn main(spawner: Spawner) {
     configure_clock(&mut config);
 
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
-    // let mut led = Output::new(p.PE1, Level::High, Speed::Low);
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0x60];
 
     let device = Ethernet::new(

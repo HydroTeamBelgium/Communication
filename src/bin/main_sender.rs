@@ -60,6 +60,13 @@ pub struct PotReading {
     pub voltage: f32,
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum MessageType {
+    Bytes = 0x01,
+    Pot   = 0x02,
+}
+
 #[derive(Copy, Clone)]
 pub enum Message {
     Bytes([u8; 16]),
@@ -102,6 +109,14 @@ fn configure_clock(config: &mut Config) {
         divq: Some(PllDiv::DIV8),
         divr: None,
     });
+    config.rcc.pll2 = Some(Pll {
+        source: PllSource::HSI,
+        prediv: PllPreDiv::DIV4,
+        mul: PllMul::MUL50,
+        divp: Some(PllDiv::DIV8), // 100mhz
+        divq: None,
+        divr: None,
+    });
     config.rcc.sys = Sysclk::PLL1_P;
     config.rcc.ahb_pre = AHBPrescaler::DIV2;
     config.rcc.apb1_pre = APBPrescaler::DIV2;
@@ -111,6 +126,7 @@ fn configure_clock(config: &mut Config) {
     config.rcc.voltage_scale = VoltageScale::Scale1;
     config.rcc.supply_config = SupplyConfig::DirectSMPS;
     config.rcc.mux.usbsel = mux::Usbsel::HSI48;
+    config.rcc.mux.adcsel = mux::Adcsel::PLL2_P;
 
 }
 // /// Initializes the Ethernet interface with static IP.
@@ -170,10 +186,12 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
     loop {
         
         let data = CHANNEL.receive().await;
+        let mut buf = heapless::Vec::<u8, 32>::new();
         match data {
             Message::Pot(p) => { 
-                let voltage = &p.voltage.to_bits().to_be_bytes();
-                match socket.send_to(voltage, endpoint).await {
+                buf.push(MessageType::Pot as u8).ok();
+                buf.extend_from_slice(&p.voltage.to_bits().to_be_bytes()).ok();
+                match socket.send_to(&buf, endpoint).await {
                     // Ok(_) => {match core::str::from_utf8(&buf) {
                             Ok(s) => info!("UDP sent: {}", s),
                             Err(_) => info!("UDP sent: (non-UTF8 data)")
@@ -181,7 +199,9 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
                 // Err(e) => warn!("UDP send error: {:?}", e),
                 }
                 /* use p.measured, p.voltage */ 
-            Message::Bytes(buf) => { 
+            Message::Bytes(string) => { 
+                buf.push(MessageType::Bytes as u8).ok();
+                buf.extend_from_slice(&string[..]).ok();
                 match socket.send_to(&buf, endpoint).await {
                 Ok(_) => {match core::str::from_utf8(&buf) {
                             Ok(s) => info!("UDP sent: {}", s),
