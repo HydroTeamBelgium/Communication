@@ -149,10 +149,11 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
                             Err(_) => info!("UDP received (non-UTF8 data)")
                         }}
                     x if x == MessageType::Pot as u8 => {
-                        let voltage = f32::from_bits(u32::from_be_bytes([rx_buf[3], rx_buf[4], rx_buf[5], rx_buf[6]]));
+                        let voltage = f32::from_bits(u32::from_be_bytes([rx_buf[1], rx_buf[2], rx_buf[3], rx_buf[4]]));
                         info!("Received PotReading: {} V", voltage);
+                        info!("Received PotReading: {} V", rx_buf);
                     }
-                    _ => warn!("Unknown message type"),
+                    _ => warn!("Unknown message type {} {}", rx_buf[0], rx_buf),
                 }
             }
             Err(e) => {

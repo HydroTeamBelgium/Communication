@@ -3,6 +3,7 @@
 
 use defmt_rtt as _;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+use heapless::String;
 use panic_probe as _;
 use rand_core::RngCore;
 use embassy_executor::Spawner;
@@ -176,19 +177,47 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
     );
 
     socket.bind(NETWORK_UDP_PORT).unwrap();
-    let data = b"Hello world";
+    let data: Message  = Message::Bytes(*b"Hello World     ");
+    CHANNEL.send(data).await;
+    let data_pot: Message  = Message::Pot(PotReading {measured: 10, voltage: 3.0});
+    CHANNEL.send(data_pot).await;
+
     let endpoint = IpEndpoint::new(DESTINATION_IP.into(), DESTINATION_PORT);
-    match socket.send_to(data, endpoint).await {
-        Ok(_) => info!("data is sent"),
-        Err(_) => warn!("data isn't sent"),
-    }
-    
+    // let mut buf = heapless::Vec::<u8, 16>::new();
+    // buf.push(MessageType::Bytes as u8).ok();
+    // // match data {
+    //     Message::Bytes(string) => {
+    //         buf.extend_from_slice(&string[..]).ok();
+    //             match socket.send_to(&buf, endpoint).await {
+    //             Ok(_) => {match core::str::from_utf8(&buf) {
+    //                         Ok(s) => info!("UDP sent: {}", s),
+    //                         Err(_) => info!("UDP sent: (non-UTF8 data)")}},
+    //             Err(e) => warn!("UDP send error: {:?}", e),
+    //         }
+    //     }
+    //     Message::Pot(potentioreading) => { 
+    //             let mut buf = heapless::Vec::<u8, 7>::new();
+    //             buf.push(MessageType::Pot as u8).ok();
+    //             buf.extend_from_slice(&potentioreading.voltage.to_bits().to_be_bytes()).ok();
+    //             match socket.send_to(&buf, endpoint).await {
+    //                 // Ok(_) => {match core::str::from_utf8(&buf) {
+    //                         Ok(s) => info!("UDP sent: {}", s),
+    //                         Err(_) => info!("UDP sent: (non-UTF8 data)")
+    //                 }
+    //             // Err(e) => warn!("UDP send error: {:?}", e),
+    //             }
+    // }
+    // match socket.send_to(data, endpoint).await {
+    //     Ok(_) => info!("data is sent"),
+    //     Err(_) => warn!("data isn't sent"),
+    // }
+
     loop {
         
-        let data = CHANNEL.receive().await;
-        let mut buf = heapless::Vec::<u8, 32>::new();
-        match data {
+        let channel_data = CHANNEL.receive().await;
+        match channel_data {
             Message::Pot(p) => { 
+                let mut buf = heapless::Vec::<u8, 7>::new();
                 buf.push(MessageType::Pot as u8).ok();
                 buf.extend_from_slice(&p.voltage.to_bits().to_be_bytes()).ok();
                 match socket.send_to(&buf, endpoint).await {
@@ -200,6 +229,7 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
                 }
                 /* use p.measured, p.voltage */ 
             Message::Bytes(string) => { 
+                let mut buf = heapless::Vec::<u8, 16>::new();
                 buf.push(MessageType::Bytes as u8).ok();
                 buf.extend_from_slice(&string[..]).ok();
                 match socket.send_to(&buf, endpoint).await {
@@ -234,18 +264,21 @@ async fn button_task(mut button: ExtiInput<'static>) -> ! {
 
 #[embassy_executor::task]
 async fn pot_task(mut adc: Adc<'static, peripherals::ADC2>, mut pin: Peri<'static, peripherals::PA3>) -> ! {
-    let mut vrefint_channel = adc.enable_vrefint();
-    const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E860 as *const u16;
-    let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
+    // let mut vrefint_channel = adc.enable_vrefint();
+    // const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E860 as *const u16;
+    // let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
     loop {
-        let vrefint = adc.blocking_read(&mut vrefint_channel);
-        info!("vrefint: {}", vrefint);
-        let measured = adc.blocking_read(&mut pin);
-        let vdda = 0.33 * vrefint_cal as f32 / vrefint as f32;
-        let voltage = (measured as f32 / 16383.0) * vdda;
-        info!("measured, voltage : {} {}", measured, voltage);
+        // let vrefint = adc.blocking_read(&mut vrefint_channel);
+        // info!("vrefint: {}", vrefint);
+        // let measured = adc.blocking_read(&mut pin);
+        // let vdda = 0.33 * vrefint_cal as f32 / vrefint as f32;
+        // let voltage = (measured as f32 / 16383.0) * vdda;
+        // info!("measured, voltage : {} {}", measured, voltage);
+        let measured: u16 = 50;
+        let voltage: f32 = 5.0;
+
         Timer::after_millis(500).await;
-        CHANNEL.send(Message::Pot(PotReading { measured, voltage })).await;
+        // CHANNEL.send(Message::Pot(PotReading { measured, voltage })).await;
 
     }
 }
