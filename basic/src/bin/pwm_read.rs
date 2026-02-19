@@ -15,23 +15,6 @@ use {defmt_rtt as _, panic_probe as _};
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 
-/// Connect PB2 and PA6 with a 1k Ohm resistor
-
-#[embassy_executor::task]
-async fn blinky(led: Peri<'static, peripherals::PE1>) {
-    let mut led = Output::new(led, Level::High, Speed::Low);
-
-    loop {
-        info!("high");
-        led.set_high();
-        Timer::after_millis(300).await;
-
-        info!("low");
-        led.set_low();
-        Timer::after_millis(300).await;
-    }
-}
-
 bind_interrupts!(struct Irqs {
     TIM2 => timer::CaptureCompareInterruptHandler<peripherals::TIM2>;
 });
@@ -42,7 +25,6 @@ async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);    
     info!("Hello World!");
 
-    //spawner.spawn(unwrap!(blinky(p.PE1)));
 
     let mut pwm_input = PwmInput::new_ch1(p.TIM2, p.PA0, Pull::None, khz(50));
     pwm_input.enable();

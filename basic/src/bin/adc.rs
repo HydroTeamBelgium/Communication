@@ -15,11 +15,13 @@ static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    // configure clockes
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::*;
         config.rcc.hsi = Some(HSIPrescaler::DIV1);
         config.rcc.csi = true;
+        //pll1 is used for the system clock
         config.rcc.pll1 = Some(Pll {
             source: PllSource::HSI,
             prediv: PllPreDiv::DIV4,
@@ -28,6 +30,7 @@ async fn main(_spawner: Spawner) {
             divq: Some(PllDiv::DIV8), // SPI1 cksel defaults to pll1_q
             divr: None,
         });
+        //pll2 is used for the ADC clock
         config.rcc.pll2 = Some(Pll {
             source: PllSource::HSI,
             prediv: PllPreDiv::DIV4,
