@@ -19,7 +19,7 @@ async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);    
     info!("Hello World!");
 
-    let mut led = Output::new(p.PE1, Level::High, Speed::Low);
+    let mut led = Output::new(p.PB0, Level::High, Speed::Low);
 
     loop {
         info!("high");
