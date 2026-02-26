@@ -1,17 +1,17 @@
 #![no_std]
 #![no_main]
 
-use core::mem::MaybeUninit;
 use defmt::*;
-use embassy_executor::Spawner;
+use core::mem::MaybeUninit;
 use embassy_stm32::{Config, SharedData};
-use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_time::Timer;
+use embassy_executor::Spawner;
+use embassy_stm32::exti::{ExtiInput};
+use embassy_stm32::gpio::Pull;
 use {defmt_rtt as _, panic_probe as _};
-
 
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
+
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
@@ -19,15 +19,16 @@ async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);    
     info!("Hello World!");
 
-    let mut led = Output::new(p.PE1, Level::High, Speed::Low);
+    // define as an External Interrupt Input pin
+    let mut button = ExtiInput::new(p.PC13, p.EXTI13, Pull::Down);
+
+
+    info!("Press the USER button...");
 
     loop {
-        info!("high");
-        led.set_high();
-        Timer::after_millis(2000).await;
-
-        info!("low");
-        led.set_low();
-        Timer::after_millis(1000).await;
+        button.wait_for_rising_edge().await;
+        info!("Pressed!");
+        button.wait_for_falling_edge().await;
+        info!("Released!");
     }
 }
