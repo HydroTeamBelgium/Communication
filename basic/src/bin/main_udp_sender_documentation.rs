@@ -67,12 +67,18 @@ fn validate_config() {
 //              STATIC ALLOCATIONS
 // =============================================
 // Network Buffers
+// The amount of packets that can be stored in the network buffer. This space is shared over all sockets
+// receiving side: packet goes into packetQueue and then in RX_buffer
+// Sender side: packet goes into TX_buffer and gets assembled, then into packetQueue
 static PACKETS: StaticCell<PacketQueue<8, 2>> = StaticCell::new();
+// The max amount of sockets
 static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
+// Coordinates the network
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 
 // Hardware Shared Data
+// This is for sharing the memory between the two cores of the stm32
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 

@@ -45,18 +45,24 @@ const DESTINATION_PORT: u16 = 12345; // chosen arbitrarily
 // RX: receiving side, TX: sender side
 // These are buffers used to store udp/tcp packets before write or read is called
 // buffer size defines how many bytes can be in the buffer before dropping new packets
-const TCP_RX_BUFFER_SIZE: usize = 1; // 1 is minimal valid value
-const TCP_TX_BUFFER_SIZE: usize = 2048;
+const RX_BUFFER_SIZE: usize = 1; // 1 is minimal valid value
+const TX_BUFFER_SIZE: usize = 2048;
 // =============================================
 //              STATIC ALLOCATIONS
 // =============================================
 // Network Buffers
+// The amount of packets that can be stored in the network buffer. This space is shared over all sockets
+// receiving side: packet goes into packetQueue and then in RX_buffer
+// Sender side: packet goes into TX_buffer and gets assembled, then into packetQueue
 static PACKETS: StaticCell<PacketQueue<8, 2>> = StaticCell::new();
+// The max amount of sockets
 static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
+// Coordinates the network
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 
 // Hardware Shared Data
+// This is for sharing the memory between the two cores of the stm32
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 
@@ -102,8 +108,8 @@ fn configure_clock(config: &mut Config) {
 async fn tcp_task(stack: &'static Stack<'static>) {
     info!("Starting TCP task...");
 
-    let mut rx_buffer = [0u8; TCP_RX_BUFFER_SIZE];
-    let mut tx_buffer = [0u8; TCP_TX_BUFFER_SIZE];
+    let mut rx_buffer = [0u8; RX_BUFFER_SIZE];
+    let mut tx_buffer = [0u8; TX_BUFFER_SIZE];
     let mut socket = TcpSocket::new(*stack, &mut rx_buffer, &mut tx_buffer);
 
     // Wait for link up
