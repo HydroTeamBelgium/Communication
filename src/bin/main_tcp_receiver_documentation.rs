@@ -6,9 +6,9 @@ use panic_probe as _;
 use rand_core::RngCore;
 use embassy_executor::Spawner;
 use embassy_net::{
-    udp::{UdpSocket, PacketMetadata},
-    StackResources, 
-    Ipv4Address, 
+    tcp::TcpSocket,
+    StackResources,
+    Ipv4Address,
     Ipv4Cidr,
     Stack
 };
@@ -24,7 +24,7 @@ use embassy_stm32::{
     rcc::*,
 };
 use static_cell::StaticCell;
-use defmt::{*, assert};
+use defmt::*;
 use core::mem::MaybeUninit;
 
 // =============================================
@@ -35,29 +35,15 @@ use core::mem::MaybeUninit;
 
 // --- Network Configuration ---
 const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(10, 42, 0, 60); // IP of sender
-const NETWORK_UDP_PORT: u16 = 12345; // chosen arbitrarily
+const TCP_LISTEN_PORT: u16 = 12345; // chosen arbitrarily
 
 // Buffer Sizes
 
 // RX: receiving side, TX: sender side
-// These are buffers used to store udp/tcp packets before recv_from or send_to is called
+// These are buffers used to store udp/tcp packets before write or read is called
 // buffer size defines how many bytes can be in the buffer before dropping new packets
 const RX_BUFFER_SIZE: usize = 2048;
 const TX_BUFFER_SIZE: usize = 1; // 1 is minimal valid value
-const MAX_PACKET_SIZE: usize = 1536; // a little above max size for ethernet packet (1530 or actually 1542 it seems, but already overkill)
-// Socket Configuration
-// Metadata is things like length of packet, ip addr...
-// The metadata count defines how many packets can sit in the buffer before dropping new packets
-const RX_METADATA_COUNT: usize = 32;
-const TX_METADATA_COUNT: usize = 1; // 1 is minimal valid value 
-// Validate configuration
-// Packets should always be able to fit inside the buffer when the buffer is empty
-fn validate_config() {
-	assert!(RX_BUFFER_SIZE >= MAX_PACKET_SIZE, "RX buffer too small");    
-	assert!(TX_BUFFER_SIZE >= 0, "TX buffer too small");
-}
-
-
 // =============================================
 //              STATIC ALLOCATIONS
 // =============================================
@@ -107,28 +93,39 @@ fn configure_clock(config: &mut Config) {
 // =============================================
 //              TASKS
 // =============================================
+
 #[embassy_executor::task]
-async fn udp_task(stack: &'static Stack<'static>) -> () {
-    // rx/tx buffers are per socket (rx/tx_meta is for the metadata of incoming/outgoing packets) 
-    let mut rx_meta = [PacketMetadata::EMPTY; RX_METADATA_COUNT]; // You could make buffers of different sizes for each socket
-    let mut rx_buffer = [0; RX_BUFFER_SIZE];    
-    let mut tx_meta = [PacketMetadata::EMPTY; TX_METADATA_COUNT];    
+async fn tcp_task(stack: &'static Stack<'static>) {
+    let mut rx_buffer = [0; RX_BUFFER_SIZE];
     let mut tx_buffer = [0; TX_BUFFER_SIZE];
-	// creates a socket with the created network stack, that is shared over all sockets
-    let mut socket = UdpSocket::new(*stack, &mut rx_meta, &mut rx_buffer, &mut tx_meta, &mut tx_buffer,);
-    // listen to a port for incoming messages (not needed)
-    socket.bind(NETWORK_UDP_PORT).unwrap(); // 0, because we don't want to receive data
-    let mut rx_buf = [0u8; MAX_PACKET_SIZE];
+
+    let mut socket = TcpSocket::new(*stack, &mut rx_buffer, &mut tx_buffer);
+
+    socket.set_timeout(None);
+
+    socket.accept(TCP_LISTEN_PORT).await.unwrap();
+    info!("Client connected!");
+
+    let mut buf = [0u8; 512];
+
     loop {
-        match socket.recv_from(&mut rx_buf).await {
-            Ok((n, sender)) => {
-		            info!("UDP received: {} from {}", &rx_buf[..n], sender);
-		        }
+        match socket.read(&mut buf).await {
+            Ok(0) => {
+                info!("Connection closed");
+                break;
+            }
+            Ok(n) => {
+                info!("Received {} bytes: {:?}", n, &buf[..n]);
+            }
             Err(e) => {
-                warn!("UDP receive error: {:?}", e);
+                warn!("Read error: {:?}", e);
+                break;
             }
         }
     }
+
+    socket.close();
+    socket.abort();
 }
 
 #[embassy_executor::task]
@@ -136,18 +133,18 @@ async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH
     runner.run().await
 }
 
-
 // =============================================
 //              MAIN
 // =============================================
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut config = Config::default();
-    validate_config();
     configure_clock(&mut config);
 
 		// initializes the primary core and returns the peripherals (GPIO pins, adc, rng,...
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
+    // mac address of this stm32 (chosen arbitrarily)
+    // mac address of the receiving stm32 is received by ARP with the ip address of that stm32
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
 
     let device = Ethernet::new(
@@ -180,6 +177,6 @@ async fn main(spawner: Spawner) {
 
     // Spawn Tasks
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
-    spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
+    spawner.spawn(tcp_task(stack)).expect("Failed to spawn UDP task");
 
 }

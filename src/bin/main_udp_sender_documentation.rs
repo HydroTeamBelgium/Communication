@@ -1,4 +1,3 @@
-// version compatible with udp_image.py (no usb and expects udp frame with header for destination)
 #![no_std]
 #![no_main]
 
@@ -156,6 +155,8 @@ async fn main(spawner: Spawner) {
     let mut config = Config::default();
     validate_config();
     configure_clock(&mut config);
+
+    // initializes the primary core and returns the peripherals (GPIO pins, adc, rng,...
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
 
@@ -170,16 +171,20 @@ async fn main(spawner: Spawner) {
 );
 
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: Ipv4Cidr::new(NETWORK_LOCAL_IP, 24),
-        dns_servers: heapless::Vec::new(),
-        gateway: None,
+        address: Ipv4Cidr::new(NETWORK_LOCAL_IP, 24), // our ip address and /24 as subnet mask
+        dns_servers: heapless::Vec::new(), // No DNS is needed for us
+        gateway: None, // No gateway is needed on local network
     });
 
+    // create a random number and let it get handled by the Irqs interrupt handler
     let mut rng = Rng::new(p.RNG, Irqs);
+    // create a random array of 8 bytes
     let mut seed = [0; 8];
     rng.try_fill_bytes(&mut seed).unwrap();
+    // converts 8 bytes into a 64-bit unsigned integer in little-endian order
     let seed = u64::from_le_bytes(seed);
 
+    // the random seed is used for creating a random port when needed, random time-out when a collision happened... (less predictable and attackable by hackers)
     let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
     let stack = STACK.init(stack);
 
