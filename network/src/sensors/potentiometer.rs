@@ -56,6 +56,7 @@ impl PotDriver {
     }
     
     /// Read with VREFINT calibration for accurate voltage
+    /// Note: Does NOT update last_raw - call update_last() after sending.
     pub fn read_calibrated(
         &mut self,
         adc: &mut Adc<'static, peripherals::ADC2>,
@@ -71,11 +72,11 @@ impl PotDriver {
         // Calculate voltage (14-bit ADC)
         let voltage = (raw as f32 / 16383.0) * vdda;
         
-        self.last_raw = raw;
         PotReading::new(raw, voltage)
     }
     
     /// Simple read without VREFINT (assumes 3.3V reference)
+    /// Note: Does NOT update last_raw - call process_and_update() for that.
     pub fn read_simple(
         &mut self,
         adc: &mut Adc<'static, peripherals::ADC2>,
@@ -83,12 +84,10 @@ impl PotDriver {
     ) -> PotReading {
         let raw = adc.blocking_read(pin);
         let voltage = (raw as f32 / 16383.0) * 3.3;
-        
-        self.last_raw = raw;
         PotReading::new(raw, voltage)
     }
     
-    /// Check if value changed enough to report
+    /// Check if value changed enough to report (compares against last sent value)
     pub fn value_changed(&self, new_raw: u16) -> bool {
         let diff = if new_raw > self.last_raw {
             new_raw - self.last_raw
@@ -96,6 +95,11 @@ impl PotDriver {
             self.last_raw - new_raw
         };
         diff >= self.config.threshold
+    }
+    
+    /// Update the last_raw value (call after sending)
+    pub fn update_last(&mut self, raw: u16) {
+        self.last_raw = raw;
     }
     
     /// Wait for the configured sample interval
@@ -122,6 +126,7 @@ macro_rules! pot_task_simple {
             loop {
                 let reading = driver.read_simple(&mut adc, &mut pin);
                 if driver.value_changed(reading.measured) {
+                    driver.update_last(reading.measured);
                     $channel.send(driver.to_message(reading)).await;
                 }
                 driver.wait_interval().await;
