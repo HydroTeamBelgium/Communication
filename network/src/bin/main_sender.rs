@@ -3,7 +3,7 @@
 
 use defmt_rtt as _;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use heapless::String;
+use heapless::{String, Vec};
 use panic_probe as _;
 use rand_core::RngCore;
 use embassy_executor::Spawner;
@@ -16,14 +16,16 @@ use embassy_net::{
     Stack
 };
 use embassy_stm32::{
-    Config, Peri, SharedData, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
+    Config, Peri, SharedData, adc::AdcChannel, bind_interrupts, eth::{self, Ethernet, GenericPhy, PacketQueue}, exti::ExtiInput, gpio::Pull, peripherals::{self, ETH}, rcc::*, rng::{InterruptHandler as RngInterruptHandler, Rng}
 };
-use embassy_stm32::adc::{Adc};
-use embassy_time::{Timer};
+use embassy_stm32::adc::{Adc, Instance};
+use embassy_time::Timer;
 
 use static_cell::StaticCell;
 use defmt::{*, assert};
 use core::{mem::MaybeUninit};
+use embassy_time::Instant;
+use embassy_stm32::gpio::Pin;
 
 // =============================================
 //              CONFIGURATION
@@ -70,7 +72,7 @@ pub enum MessageType {
 
 #[derive(Copy, Clone)]
 pub enum Message {
-    Bytes([u8; 16]),
+    Bytes(&'static [u8]),
     Pot(PotReading),
 }
 
@@ -83,7 +85,7 @@ static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
 // Shared channel for messages from button_task to udp_task
-static CHANNEL: Channel<CriticalSectionRawMutex, Message, 4> = Channel::new();
+static CHANNEL: Channel<CriticalSectionRawMutex, Vec<u8, 32>, 4> = Channel::new();
 
 // Hardware Shared Data
 #[unsafe(link_section = ".ram_d3.shared_data")]
@@ -130,27 +132,6 @@ fn configure_clock(config: &mut Config) {
     config.rcc.mux.adcsel = mux::Adcsel::PLL2_P;
 
 }
-// /// Initializes the Ethernet interface with static IP.
-// fn setup_ethernet(
-//     eth: peripherals::ETH,
-//     pa1: peripherals::PA1,
-//     pa2: peripherals::PA2,
-//     pc1: peripherals::PC1,
-//     pa7: peripherals::PA7,
-//     pc4: peripherals::PC4,
-//     pc5: peripherals::PC5,
-//     pg13: peripherals::PG13,
-//     pb13: peripherals::PB13,
-//     pg11: peripherals::PG11,
-//     rng: peripherals::RNG,
-//     mac_addr: [u8; 6],
-// ) -> (Stack<'static>, embassy_net::Runner<'static, Ethernet<'static, ETH, GenericSMI>>)
-//  {
-    
-    
-// }
-
-
 
 // =============================================
 //              TASKS
@@ -177,70 +158,23 @@ async fn udp_task(stack: &'static Stack<'static>) -> () {
     );
 
     socket.bind(NETWORK_UDP_PORT).unwrap();
-    let data: Message  = Message::Bytes(*b"Hello World     ");
-    CHANNEL.send(data).await;
-    let data_pot: Message  = Message::Pot(PotReading {measured: 10, voltage: 3.0});
-    CHANNEL.send(data_pot).await;
+    let data: Message  = Message::Bytes(b"Hello World");
+    format(3, data).await;
+    // CHANNEL.send(data).await;
+    let data_pot: Message = Message::Pot(PotReading {measured: 10, voltage: 3.0});
+    format(2, data_pot).await;
+    // CHANNEL.send(data_pot).await;
 
     let endpoint = IpEndpoint::new(DESTINATION_IP.into(), DESTINATION_PORT);
-    // let mut buf = heapless::Vec::<u8, 16>::new();
-    // buf.push(MessageType::Bytes as u8).ok();
-    // // match data {
-    //     Message::Bytes(string) => {
-    //         buf.extend_from_slice(&string[..]).ok();
-    //             match socket.send_to(&buf, endpoint).await {
-    //             Ok(_) => {match core::str::from_utf8(&buf) {
-    //                         Ok(s) => info!("UDP sent: {}", s),
-    //                         Err(_) => info!("UDP sent: (non-UTF8 data)")}},
-    //             Err(e) => warn!("UDP send error: {:?}", e),
-    //         }
-    //     }
-    //     Message::Pot(potentioreading) => { 
-    //             let mut buf = heapless::Vec::<u8, 7>::new();
-    //             buf.push(MessageType::Pot as u8).ok();
-    //             buf.extend_from_slice(&potentioreading.voltage.to_bits().to_be_bytes()).ok();
-    //             match socket.send_to(&buf, endpoint).await {
-    //                 // Ok(_) => {match core::str::from_utf8(&buf) {
-    //                         Ok(s) => info!("UDP sent: {}", s),
-    //                         Err(_) => info!("UDP sent: (non-UTF8 data)")
-    //                 }
-    //             // Err(e) => warn!("UDP send error: {:?}", e),
-    //             }
-    // }
-    // match socket.send_to(data, endpoint).await {
-    //     Ok(_) => info!("data is sent"),
-    //     Err(_) => warn!("data isn't sent"),
-    // }
 
     loop {
         
         let channel_data = CHANNEL.receive().await;
-        match channel_data {
-            Message::Pot(p) => { 
-                let mut buf = heapless::Vec::<u8, 7>::new();
-                buf.push(MessageType::Pot as u8).ok();
-                buf.extend_from_slice(&p.voltage.to_bits().to_be_bytes()).ok();
-                match socket.send_to(&buf, endpoint).await {
-                    // Ok(_) => {match core::str::from_utf8(&buf) {
-                            Ok(s) => info!("UDP sent: {}", s),
-                            Err(_) => info!("UDP sent: (non-UTF8 data)")
-                    }
-                // Err(e) => warn!("UDP send error: {:?}", e),
-                }
-                /* use p.measured, p.voltage */ 
-            Message::Bytes(string) => { 
-                let mut buf = heapless::Vec::<u8, 16>::new();
-                buf.push(MessageType::Bytes as u8).ok();
-                buf.extend_from_slice(&string[..]).ok();
-                match socket.send_to(&buf, endpoint).await {
-                Ok(_) => {match core::str::from_utf8(&buf) {
-                            Ok(s) => info!("UDP sent: {}", s),
-                            Err(_) => info!("UDP sent: (non-UTF8 data)")}},
-                Err(e) => warn!("UDP send error: {:?}", e),
-                }
-            }
-            }
-        }
+        match socket.send_to(&channel_data, endpoint).await {
+            Ok(s) => info!("UDP sent: {}", s),
+            Err(_) => info!("UDP sent: (non-UTF8 data)"),
+        };
+    }
         
   
 }
@@ -253,34 +187,86 @@ async fn net_task(mut runner: embassy_net::Runner<'static, Ethernet<'static, ETH
 
 #[embassy_executor::task]
 async fn button_task(mut button: ExtiInput<'static>) -> ! {
+    let id = 1;
     loop {
         button.wait_for_rising_edge().await;
         info!("Pressed!");
-        CHANNEL.send(Message::Bytes(*b"button 1 pressed")).await;
+        format(id, Message::Bytes(b"button 1 pressed")).await;        // CHANNEL.send(Message::Bytes(*b"button 1 pressed")).await;
         button.wait_for_falling_edge().await;
         info!("Released!");
     }
 }
 
 #[embassy_executor::task]
-async fn pot_task(mut adc: Adc<'static, peripherals::ADC2>, mut pin: Peri<'static, peripherals::PA3>) -> ! {
-    // let mut vrefint_channel = adc.enable_vrefint();
-    // const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E860 as *const u16;
-    // let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
+async fn pot_task_pa3(adc: Adc<'static, peripherals::ADC2>, pin: Peri<'static, peripherals::PA3>) -> ! {
+    pot_task_generic(adc, pin, 0).await
+}
+
+#[embassy_executor::task]
+async fn pot_task_pc0(adc: Adc<'static, peripherals::ADC1>, pin: Peri<'static, peripherals::PC0>) -> ! {
+    pot_task_generic(adc, pin, 1).await
+}
+
+async fn pot_task_generic<T: Instance, P: AdcChannel<T> + 'static>(
+    mut adc: Adc<'static, T>,
+    mut pin: P,
+    id: i8
+) -> ! 
+    where
+        P: AdcChannel<T> + 'static,
+{    
+    let mut vrefint_channel = adc.enable_vrefint();
+    const VREFINT_CAL_ADDR: *const u16 = 0x1FF1E860 as *const u16;
+    let vrefint_cal = unsafe{core::ptr::read(VREFINT_CAL_ADDR)};
     loop {
-        // let vrefint = adc.blocking_read(&mut vrefint_channel);
-        // info!("vrefint: {}", vrefint);
-        // let measured = adc.blocking_read(&mut pin);
-        // let vdda = 0.33 * vrefint_cal as f32 / vrefint as f32;
-        // let voltage = (measured as f32 / 16383.0) * vdda;
-        // info!("measured, voltage : {} {}", measured, voltage);
-        let measured: u16 = 50;
-        let voltage: f32 = 5.0;
+        let vrefint = adc.blocking_read(&mut vrefint_channel);
+        info!("vrefint: {}", vrefint);
+        let measured = adc.blocking_read(&mut pin);
+        let vdda = 0.33 * vrefint_cal as f32 / vrefint as f32;
+        let voltage = (measured as f32 / 16383.0) * vdda;
+        info!("measured, voltage : {} {}", measured, voltage);
+        // let measured: u16 = 50;
+        // let voltage: f32 = 5.0;
 
         Timer::after_millis(500).await;
+        format(id, Message::Pot(PotReading { measured, voltage })).await;
         // CHANNEL.send(Message::Pot(PotReading { measured, voltage })).await;
 
     }
+}
+
+async fn format(id: i8, value: Message) {
+    let now = Instant::now();
+    let millis = now.as_millis() as u32; // 4 bytes
+    let bytes = millis.to_le_bytes(); // [u8; 4]
+    println!("{}", now.as_micros());   // microseconds since boot
+    println!("{}", now.as_millis());   // milliseconds since boot
+    println!("{}", now.as_secs());     // seconds since boot
+    let mut buf = heapless::Vec::<u8, 32>::new();
+    
+    match value {
+        Message::Bytes(string) => {
+            let unit = b'/';
+            buf.push(MessageType::Bytes as u8).ok();
+            buf.push(id as u8).ok();
+            buf.push(unit as u8).ok();
+            buf.extend_from_slice(&bytes).ok();
+            buf.extend_from_slice(&string[..]).ok();
+
+        },
+        Message::Pot(pot_reading) => {
+            let unit = b'V';
+            buf.push(MessageType::Pot as u8).ok();
+            buf.push(id as u8).ok();
+            buf.push(unit as u8).ok();
+            buf.extend_from_slice(&bytes).ok();
+            buf.extend_from_slice(&pot_reading.voltage.to_bits().to_be_bytes()).ok();
+        },
+    }
+    CHANNEL.send(buf).await;
+
+
+
 }
 
 // =============================================
@@ -306,7 +292,8 @@ async fn main(spawner: Spawner) {
         GenericPhy::new_auto(),
         mac_addr,
 );
-    let pin: Peri<'static, peripherals::PA3> = p.PA3;
+    let pin_pa3: Peri<'static, peripherals::PA3> = p.PA3;
+    let pin_pc0: Peri<'static, peripherals::PC0> = p.PC0;
 
     let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
         address: Ipv4Cidr::new(NETWORK_LOCAL_IP, 24),
@@ -321,12 +308,14 @@ async fn main(spawner: Spawner) {
 
     let (stack, runner) = embassy_net::new(device, config, RESOURCES.init(StackResources::new()), seed);
     let stack = STACK.init(stack);
-    let adc = Adc::new(p.ADC2);
+    let adc_2 = Adc::new(p.ADC2);
+    let adc_1 = Adc::new(p.ADC1);
 
     // Spawn Tasks
     spawner.spawn(net_task(runner)).expect("Failed to spawn net task");
     spawner.spawn(udp_task(stack)).expect("Failed to spawn UDP task");
     spawner.spawn(button_task(button)).expect("Failed to spawn button task");
-    spawner.spawn(pot_task(adc, pin)).expect("Failed to spawn potentiometer task")
+    spawner.spawn(pot_task_pa3(adc_2, pin_pa3)).expect("Failed to spawn potentiometer task");
+    spawner.spawn(pot_task_pc0(adc_1, pin_pc0)).expect("Failed to spawn potentiometer task");
 
 }

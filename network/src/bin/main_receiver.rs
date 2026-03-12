@@ -138,22 +138,35 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
 
     loop {
         match socket.recv_from(&mut rx_buf).await {
-            
             Ok((n, sender)) => {
-                match rx_buf[0] {
+                let msg_type = rx_buf[0];
+                let id = rx_buf[1] as i8;
+                let unit = rx_buf[2] as char;
+                let timestamp = u32::from_le_bytes([rx_buf[3], rx_buf[4], rx_buf[5], rx_buf[6]]);
+                
+                match msg_type {
                     x if x == MessageType::Bytes as u8 => {
-                        match core::str::from_utf8(&rx_buf[..n]) {
+                        match core::str::from_utf8(&rx_buf[7..n]) {
                             Ok(s) => {
-                            info!("UDP received: {} from {} {}", s, sender, counter);
-                            counter += 1;}
-                            Err(_) => info!("UDP received (non-UTF8 data)")
-                        }}
-                    x if x == MessageType::Pot as u8 => {
-                        let voltage = f32::from_bits(u32::from_be_bytes([rx_buf[1], rx_buf[2], rx_buf[3], rx_buf[4]]));
-                        info!("Received PotReading: {} V", voltage);
-                        info!("Received PotReading: {} V", rx_buf);
+                                info!(
+                                    "UDP received: id={} unit={} timestamp={}ms value={} from {} counter={}",
+                                    id, unit, timestamp, s, sender, counter
+                                );
+                                counter += 1;
+                            }
+                            Err(_) => info!("UDP received (non-UTF8 data)"),
+                        }
                     }
-                    _ => warn!("Unknown message type {} {}", rx_buf[0], rx_buf),
+                    x if x == MessageType::Pot as u8 => {
+                        let voltage = f32::from_bits(u32::from_be_bytes([
+                            rx_buf[7], rx_buf[8], rx_buf[9], rx_buf[10]
+                            ]));
+                            info!(
+                                "Received PotReading: id={} unit={} timestamp={}ms voltage={} V",
+                            id, unit, timestamp, voltage
+                        );
+                    }
+                    _ => warn!("Unknown message type {} {:?}", rx_buf[0], rx_buf),
                 }
             }
             Err(e) => {
@@ -161,6 +174,31 @@ async fn udp_task(stack: &'static Stack<'static>) -> ! {
             }
         }
     }
+    // loop {
+    //     match socket.recv_from(&mut rx_buf).await {
+            
+    //         Ok((n, sender)) => {
+    //             match rx_buf[0] {
+    //                 x if x == MessageType::Bytes as u8 => {
+    //                     match core::str::from_utf8(&rx_buf[..n]) {
+    //                         Ok(s) => {
+    //                         info!("UDP received: {} from {} {}", s, sender, counter);
+    //                         counter += 1;}
+    //                         Err(_) => info!("UDP received (non-UTF8 data)")
+    //                     }}
+    //                 x if x == MessageType::Pot as u8 => {
+    //                     let voltage = f32::from_bits(u32::from_be_bytes([rx_buf[1], rx_buf[2], rx_buf[3], rx_buf[4]]));
+    //                     info!("Received PotReading: {} V", voltage);
+    //                     info!("Received PotReading: {} V", rx_buf);
+    //                 }
+    //                 _ => warn!("Unknown message type {} {}", rx_buf[0], rx_buf),
+    //             }
+    //         }
+    //         Err(e) => {
+    //             warn!("UDP receive error: {:?}", e);
+    //         }
+    //     }
+    // }
 }
 
 #[embassy_executor::task]

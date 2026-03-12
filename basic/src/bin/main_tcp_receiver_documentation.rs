@@ -123,7 +123,14 @@ async fn tcp_task(stack: &'static Stack<'static>) {
                 break;
             }
             Ok(n) => {
-                info!("Received {} bytes: {:?}", n, &buf[..n]);
+                match core::str::from_utf8(&buf[..n]) {
+                    Ok(s) => {
+                        info!("Received {} bytes: {:?}", n, s);
+                    }
+                    Err(_) => {
+                        error!("Received error");
+                    }
+                }
             }
             Err(e) => {
                 warn!("Read error: {:?}", e);
