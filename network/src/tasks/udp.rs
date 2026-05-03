@@ -24,8 +24,8 @@ pub fn log_message(msg: &Message, sender: &UdpMetadata, counter: u32) {
     match msg {
         Message::Bytes(data) => {
             match core::str::from_utf8(data) {
-                Ok(s) => info!("[{}] Bytes: {} from {}", counter, s, sender),
-                Err(_) => info!("[{}] Bytes (non-UTF8) from {}", counter, sender),
+                Ok(s) => info!("[{}] Bytes: {} from {} data: {}", counter, s, sender, data),
+                Err(_) => info!("[{}] Bytes (non-UTF8) from {} data {}", counter, sender, data),
             }
         }
         Message::Pot(reading) => {

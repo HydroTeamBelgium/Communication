@@ -17,6 +17,7 @@ pub use static_cell::StaticCell;
 pub use crate::config::*;
 pub use crate::protocol::*;
 pub use crate::hal::*;
+pub use crate::{can_write_task, can_read_task};
 pub use crate::tasks::net_task;
 
 // Re-export sensor drivers

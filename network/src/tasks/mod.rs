@@ -4,6 +4,7 @@
 
 pub mod net;
 pub mod udp;
+pub mod can;
 
 pub use net::*;
 pub use udp::*;

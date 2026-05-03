@@ -14,6 +14,13 @@ use embassy_stm32::rcc::*;
 pub fn configure_clock_full(config: &mut Config) {
     config.rcc.hsi = Some(HSIPrescaler::DIV1);
     config.rcc.csi = true;
+
+    config.rcc.hse = Some(Hse {
+        freq: embassy_stm32::time::Hertz(25_000_000),
+        mode: HseMode::Oscillator,
+    });
+    config.rcc.mux.fdcansel = mux::Fdcansel::HSE;
+
     
     // PLL1: System clock
     config.rcc.pll1 = Some(Pll {
