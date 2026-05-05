@@ -12,6 +12,10 @@ pub enum MessageType {
     Bytes = 0x01,
     /// Potentiometer reading
     Pot = 0x02,
+    /// CAN frame data (8 byte payload + CAN ID)
+    CanFrame = 0x03,
+    /// ECU SCS JSON logging data
+    EcuJson = 0x04,
 }
 
 impl MessageType {
@@ -20,6 +24,8 @@ impl MessageType {
         match b {
             0x01 => Some(Self::Bytes),
             0x02 => Some(Self::Pot),
+            0x03 => Some(Self::CanFrame),
+            0x04 => Some(Self::EcuJson),
             _ => None,
         }
     }
@@ -60,21 +66,110 @@ impl PotReading {
     }
 }
 
-/// Message variants for channel communication
+/// CAN frame data for remote logging
 #[derive(Copy, Clone, Debug, Format)]
+pub struct CanFrameData {
+    /// CAN identifier (extended)
+    pub can_id: u32,
+    /// Frame data (8 bytes)
+    pub data: [u8; 8],
+    /// Data length code (0-8)
+    pub dlc: u8,
+}
+
+impl CanFrameData {
+    /// Create a new CAN frame data
+    pub const fn new(can_id: u32, data: [u8; 8], dlc: u8) -> Self {
+        Self { can_id, data, dlc }
+    }
+
+    /// Serialize to bytes (13 bytes: 4 CAN ID + 8 data + 1 DLC)
+    pub fn to_bytes(&self) -> [u8; 13] {
+        let mut buf = [0u8; 13];
+        buf[0..4].copy_from_slice(&self.can_id.to_be_bytes());
+        buf[4..12].copy_from_slice(&self.data);
+        buf[12] = self.dlc;
+        buf
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 13 {
+            return None;
+        }
+        let can_id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let mut data = [0u8; 8];
+        data.copy_from_slice(&bytes[4..12]);
+        let dlc = bytes[12];
+
+        if dlc > 8 {
+            return None;
+        }
+
+        Some(Self { can_id, data, dlc })
+    }
+}
+
+/// ECU JSON data for remote logging (variable length string)
+#[derive(Clone, Debug, Format)]
+pub struct EcuJsonData {
+    /// JSON string (up to 256 bytes)
+    pub json: heapless::String<256>,
+}
+
+impl EcuJsonData {
+    /// Create new ECU JSON data
+    pub fn new(json: heapless::String<256>) -> Self {
+        Self { json }
+    }
+
+    /// Serialize to bytes (1 byte length + JSON data)
+    pub fn to_bytes(&self, buf: &mut [u8]) -> usize {
+        let json_bytes = self.json.as_bytes();
+        if buf.len() < 1 + json_bytes.len() {
+            return 0;
+        }
+        buf[0] = json_bytes.len() as u8;
+        buf[1..1 + json_bytes.len()].copy_from_slice(json_bytes);
+        1 + json_bytes.len()
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.is_empty() {
+            return None;
+        }
+        let len = bytes[0] as usize;
+        if bytes.len() < 1 + len {
+            return None;
+        }
+        let json_str = core::str::from_utf8(&bytes[1..1 + len]).ok()?;
+        let json: heapless::String<256> = heapless::String::try_from(json_str).ok()?;
+        Some(Self { json })
+    }
+}
+
+/// Message variants for channel communication
+#[derive(Clone, Debug, Format)]
 pub enum Message {
     /// Raw bytes (16 byte fixed payload)
     Bytes([u8; 16]),
     /// Potentiometer reading
     Pot(PotReading),
+    /// CAN frame data for remote logging
+    CanFrame(CanFrameData),
+    /// ECU SCS JSON logging data
+    EcuJson(EcuJsonData),
 }
 
 impl Message {
     /// Get the message type byte
-    pub const fn message_type(&self) -> MessageType {
+    pub fn message_type(&self) -> MessageType {
         match self {
             Self::Bytes(_) => MessageType::Bytes,
             Self::Pot(_) => MessageType::Pot,
+            Self::CanFrame(_) => MessageType::CanFrame,
+            Self::EcuJson(_) => MessageType::EcuJson,
         }
     }
 
@@ -98,6 +193,21 @@ impl Message {
                 buf[1..5].copy_from_slice(&reading.to_bytes());
                 5
             }
+            Self::CanFrame(can_data) => {
+                if buf.len() < 14 {
+                    return 0;
+                }
+                buf[0] = MessageType::CanFrame as u8;
+                buf[1..14].copy_from_slice(&can_data.to_bytes());
+                14
+            }
+            Self::EcuJson(ecu_data) => {
+                if buf.len() < 2 {
+                    return 0;
+                }
+                buf[0] = MessageType::EcuJson as u8;
+                ecu_data.to_bytes(&mut buf[1..]) + 1
+            }
         }
     }
 
@@ -118,6 +228,14 @@ impl Message {
             MessageType::Pot => {
                 let reading = PotReading::from_bytes(&buf[1..])?;
                 Some(Self::Pot(reading))
+            }
+            MessageType::CanFrame => {
+                let can_data = CanFrameData::from_bytes(&buf[1..])?;
+                Some(Self::CanFrame(can_data))
+            }
+            MessageType::EcuJson => {
+                let ecu_data = EcuJsonData::from_bytes(&buf[1..])?;
+                Some(Self::EcuJson(ecu_data))
             }
         }
     }

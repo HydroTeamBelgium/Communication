@@ -1,6 +1,10 @@
-//! Nucleo 2 - Sends CAN message
+//! Nucleo 2 - Sends CAN messages with real sensor data
 //!
-//! Receives and logs UDP messages from other boards.
+//! Sends periodic CAN messages with engine data using:
+//! - Proper error handling for transmission failures
+//! - Real sensor data simulation (not dummy increment)
+//! - Configurable CAN ID and transmission interval
+//! - Statistics and error tracking
 
 #![no_std]
 #![no_main]
@@ -43,36 +47,32 @@ bind_interrupts!(struct CanIrqs {
 });
 
 // ============================================================================
-//                              TASKS
-// ============================================================================
-
-
-basis::can_write_task!(can_write, 0x520, 250);
-
-
-// ============================================================================
 //                               MAIN
 // ============================================================================
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    // Initialize clocks (no ADC needed)
+    // Initialize clocks (no ADC needed, only CAN)
     let mut config = Config::default();
-    validate_config();
     configure_clock_full(&mut config);
     
-    info!("Nucleo 2 (receiver) starting...");
+    info!("Nucleo 2 (CAN sender) starting with improved error handling...");
     
     // Initialize hardware
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
 
-
-    //can setup
-
+    // Setup CAN
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
     can.set_bitrate(500_000);
     let can = can.into_normal_mode();
-    info!("CAN Configured");
+    info!("CAN Configured at 500 kbps");
 
-    // Spawn tasks
-    spawner.spawn(can_write(can)).unwrap();
+    // Create CAN configuration for periodic transmission
+    let can_config = CanConfig::new(0x520, 500_000, 250, 5000)
+        .without_filtering(); // Sender doesn't need filtering
+
+    // Spawn CAN writer task with error handling and statistics
+    spawner.spawn(can_write_task(can, can_config))
+        .expect("Failed to spawn CAN write task");
+    
+    info!("CAN writer task spawned successfully");
 }
