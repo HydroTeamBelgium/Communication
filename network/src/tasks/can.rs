@@ -206,21 +206,20 @@ pub async fn can_read_task(
 ///
 /// # Example
 /// ```ignore
-/// let channel: Channel<Message, 8> = Channel::new();
-/// let config = CanConfig::new(0x520, 500_000, 250, 5000);
+/// let channel: Channel<Message, 256> = Channel::new();
+/// let config = CanConfig::new(0x520, 500_000, 250, 200);
 /// spawner.spawn(can_read_task_with_channel(can, config, channel.sender())).unwrap();
 /// ```
 #[embassy_executor::task]
 pub async fn can_read_task_with_channel(
     mut can: Can<'static>,
     config: CanConfig,
-    channel_tx: Sender<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, Message, 8>,
+    channel_tx: Sender<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, Message, 256>,
 ) {
     use embedded_can::Id;
     use heapless::String;
 
     let mut stats = CanStats::default();
-    let mut expected_seq: u8 = 0;
 
     info!("CAN Reader with UDP broadcast (SCS protocol): Starting with {} ms timeout", config.rx_timeout_ms);
 
@@ -265,14 +264,17 @@ pub async fn can_read_task_with_channel(
                     let ecu_json = EcuJsonData::new(json_string);
                     let msg = Message::EcuJson(ecu_json);
 
-                    // Send to channel (non-blocking)
-                    match channel_tx.try_send(msg) {
-                        Ok(_) => {
+                    // Send to channel with backpressure (50ms timeout before dropping)
+                    match embassy_futures::select::select(
+                        channel_tx.send(msg),
+                        Timer::after_millis(50)
+                    ).await {
+                        embassy_futures::select::Either::First(_) => {
                             trace!("CAN broadcast to UDP: ID={=u32}, JSON sent", id_val);
                             stats.rx_count += 1;
                         }
-                        Err(_) => {
-                            warn!("CAN broadcast channel full, dropping frame ID={=u32}", id_val);
+                        embassy_futures::select::Either::Second(_) => {
+                            error!("CAN→UDP pipeline stalled > 50ms, dropping JSON frame ID={=u32}", id_val);
                             stats.rx_errors += 1;
                         }
                     }
@@ -290,28 +292,20 @@ pub async fn can_read_task_with_channel(
 
                     let msg = Message::CanFrame(can_msg);
 
-                    match channel_tx.try_send(msg) {
-                        Ok(_) => {
+                    // Send to channel with backpressure (50ms timeout before dropping)
+                    match embassy_futures::select::select(
+                        channel_tx.send(msg),
+                        Timer::after_millis(50)
+                    ).await {
+                        embassy_futures::select::Either::First(_) => {
                             trace!("CAN broadcast raw frame to UDP: ID={=u32}", id_val);
                             stats.rx_count += 1;
                         }
-                        Err(_) => {
-                            warn!("CAN broadcast channel full for raw frame ID={=u32}", id_val);
+                        embassy_futures::select::Either::Second(_) => {
+                            error!("CAN→UDP pipeline stalled > 50ms, dropping raw frame ID={=u32}", id_val);
+                            stats.rx_errors += 1;
                         }
                     }
-                }
-
-                // Check sequence number if frame has one
-                if frame_data.len() > 6 {
-                    let seq = frame_data[6];
-                    if seq != expected_seq {
-                        warn!(
-                            "CAN RX: Seq gap detected: expected {}, got {}",
-                            expected_seq,
-                            seq
-                        );
-                    }
-                    expected_seq = seq.wrapping_add(1);
                 }
             }
 
@@ -403,13 +397,13 @@ macro_rules! can_read_task {
 ///
 /// # Example
 /// ```ignore
-/// let channel: Channel<Message, 8> = Channel::new();
+/// let channel: Channel<Message, 256> = Channel::new();
 /// spawner.spawn(can_udp_broadcast_task(stack, channel.receiver())).unwrap();
 /// ```
 #[embassy_executor::task]
 pub async fn can_udp_broadcast_task(
     stack: &'static embassy_net::Stack<'static>,
-    rx: embassy_sync::channel::Receiver<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, Message, 8>,
+    rx: embassy_sync::channel::Receiver<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, Message, 256>,
 ) {
     use embassy_net::udp::{PacketMetadata, UdpSocket};
     use embassy_net::IpEndpoint;
@@ -445,8 +439,24 @@ pub async fn can_udp_broadcast_task(
     );
 
     let mut msg_count = 0u32;
+    let mut link_down_logged = false;
 
     loop {
+        // Check if network link is up (issue #4)
+        if !stack.is_link_up() {
+            if !link_down_logged {
+                warn!("Network link DOWN - UDP broadcast waiting for connection");
+                link_down_logged = true;
+            }
+            Timer::after_millis(500).await;
+            continue;
+        }
+        
+        if link_down_logged {
+            info!("Network link UP - resuming UDP broadcast");
+            link_down_logged = false;
+        }
+
         let msg = rx.receive().await;
         msg_count += 1;
 

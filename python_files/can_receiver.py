@@ -27,31 +27,43 @@ MSG_TYPE_ECU_JSON = 0x04
 class CanFrameData:
     """Represents CAN frame data received over UDP"""
 
-    def __init__(self, can_id: int, data: bytes, dlc: int):
+    def __init__(self, can_id: int, data: bytes, dlc: int, seq: int = 0):
         self.can_id = can_id
         self.data = data
         self.dlc = dlc
+        self.seq = seq  # Track sequence number for gap detection
         self.timestamp = datetime.now()
 
     @staticmethod
-    def from_bytes(payload: bytes) -> Optional["CanFrameData"]:
-        """Deserialize from 13-byte payload: [CAN_ID:4][DATA:8][DLC:1]"""
-        if len(payload) < 13:
+    def from_bytes(payload: bytes, debug: bool = False) -> Optional["CanFrameData"]:
+        """Deserialize from variable-length payload: [CAN_ID:4][SEQ:1][DATA:up to 8][DLC:1]"""
+        if len(payload) < 6:
+            if debug:
+                print(f"[DEBUG] Truncated CAN frame: {len(payload)} bytes, expected >= 6. Raw: {payload.hex()}", file=sys.stderr)
             return None
 
         can_id = struct.unpack(">I", payload[0:4])[0]
-        data = payload[4:12]
-        dlc = payload[12]
+        seq = payload[4]
+        dlc = payload[5]
 
         if dlc > 8:
+            if debug:
+                print(f"[DEBUG] Invalid CAN DLC: {dlc} > 8 for ID 0x{can_id:03X}", file=sys.stderr)
+            return None
+        
+        if len(payload) < 6 + 8:
+            if debug:
+                print(f"[DEBUG] Incomplete CAN data: {len(payload)} bytes, expected >= 14. Raw: {payload.hex()}", file=sys.stderr)
             return None
 
-        return CanFrameData(can_id, data, dlc)
+        data = payload[6:14]
+
+        return CanFrameData(can_id, data, dlc, seq)
 
     def __str__(self) -> str:
         """Format as human-readable string"""
         data_hex = " ".join(f"{b:02X}" for b in self.data[: self.dlc])
-        return f"CAN ID: 0x{self.can_id:03X} | DLC: {self.dlc} | Data: {data_hex} | Time: {self.timestamp.strftime('%H:%M:%S.%f')[:-3]}"
+        return f"CAN ID: 0x{self.can_id:03X} | SEQ: {self.seq} | DLC: {self.dlc} | Data: {data_hex} | Time: {self.timestamp.strftime('%H:%M:%S.%f')[:-3]}"
 
 
 class EcuJsonData:
@@ -85,12 +97,15 @@ class EcuJsonData:
 class CanReceiver:
     """UDP receiver for CAN broadcast data"""
 
-    def __init__(self, port: int = 9999, listen_addr: str = "0.0.0.0"):
+    def __init__(self, port: int = 9999, listen_addr: str = "0.0.0.0", debug: bool = False):
         self.port = port
         self.listen_addr = listen_addr
         self.socket = None
         self.frame_count = 0
         self.error_count = 0
+        self.debug = debug
+        self.last_seq = {}  # Track last sequence per CAN ID for gap detection (issue #3)
+        self.seq_gaps = 0
 
     def setup(self) -> bool:
         """Create and bind UDP socket"""
@@ -141,9 +156,19 @@ class CanReceiver:
                                 file=sys.stderr,
                             )
                     elif msg_type == MSG_TYPE_CAN_FRAME:
-                        frame = CanFrameData.from_bytes(data[1:])
+                        frame = CanFrameData.from_bytes(data[1:], debug=self.debug)
                         if frame:
-                            self.frame_count += 1
+                            # Check for sequence gaps (issue #3)
+                            expected_seq = (self.last_seq.get(frame.can_id, -1) + 1) & 0xFF
+                            if frame.seq != expected_seq and frame.can_id in self.last_seq:
+                                self.seq_gaps += 1
+                                print(
+                                    f"[GAP] CAN ID 0x{frame.can_id:03X}: expected seq {expected_seq}, got {frame.seq}",
+                                    file=sys.stderr
+                                )
+                            self.last_seq[frame.can_id] = frame.seq
+                            
+                            self.frame_count += 1  # Fix: was not incrementing (issue #5)
                             print(
                                 f"[{self.frame_count:6d}] {frame} (from {addr[0]}:{addr[1]})"
                             )
@@ -156,21 +181,34 @@ class CanReceiver:
                     elif msg_type == MSG_TYPE_POT:
                         if len(data) >= 5:
                             voltage = struct.unpack(">f", data[1:5])[0]
+                            self.frame_count += 1  # Fix: was not incrementing (issue #5)
                             print(
-                                f"[{self.frame_count + 1:6d}] POT Reading: {voltage:.3f}V (from {addr[0]}:{addr[1]})"
+                                f"[{self.frame_count:6d}] POT Reading: {voltage:.3f}V (from {addr[0]}:{addr[1]})"
                             )
+                        else:
+                            self.error_count += 1
+                            if self.debug:
+                                print(f"[DEBUG] POT message too short: {len(data)} bytes", file=sys.stderr)
                     elif msg_type == MSG_TYPE_BYTES:
                         if len(data) >= 17:
                             payload = data[1:17]
                             try:
                                 text = payload.decode("utf-8").rstrip("\x00")
+                                self.frame_count += 1  # Fix: was not incrementing (issue #5)
                                 print(
-                                    f"[{self.frame_count + 1:6d}] Bytes: {text} (from {addr[0]}:{addr[1]})"
+                                    f"[{self.frame_count:6d}] Bytes: {text} (from {addr[0]}:{addr[1]})"
                                 )
-                            except:
+                            except Exception as e:
+                                self.frame_count += 1
                                 print(
-                                    f"[{self.frame_count + 1:6d}] Bytes (raw): {payload.hex()} (from {addr[0]}:{addr[1]})"
+                                    f"[{self.frame_count:6d}] Bytes (raw): {payload.hex()} (from {addr[0]}:{addr[1]})"
                                 )
+                                if self.debug:
+                                    print(f"[DEBUG] UTF-8 decode failed: {e}", file=sys.stderr)
+                        else:
+                            self.error_count += 1
+                            if self.debug:
+                                print(f"[DEBUG] BYTES message too short: {len(data)} bytes, expected >= 17", file=sys.stderr)
                     else:
                         print(
                             f"[WARNING] Unknown message type: 0x{msg_type:02X}",
@@ -185,7 +223,7 @@ class CanReceiver:
                     print(f"[ERROR] {e}", file=sys.stderr)
 
         except KeyboardInterrupt:
-            print(f"\n\n✓ Stopped. Received {self.frame_count} frames, {self.error_count} errors")
+            print(f"\n\n✓ Stopped. Received {self.frame_count} frames, {self.error_count} errors, {self.seq_gaps} sequence gaps")
         finally:
             if self.socket:
                 self.socket.close()
@@ -230,6 +268,11 @@ Examples:
         action="store_true",
         help="Enable verbose output",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output with packet diagnostics",
+    )
 
     args = parser.parse_args()
 
@@ -243,7 +286,7 @@ Examples:
     print("=" * 70)
     print()
 
-    receiver = CanReceiver(port=args.port, listen_addr=args.listen)
+    receiver = CanReceiver(port=args.port, listen_addr=args.listen, debug=args.debug)
 
     if receiver.setup():
         receiver.receive_and_process()

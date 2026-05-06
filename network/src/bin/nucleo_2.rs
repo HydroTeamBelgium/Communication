@@ -66,13 +66,16 @@ async fn main(spawner: Spawner) {
     let can = can.into_normal_mode();
     info!("CAN Configured at 500 kbps");
 
-    // Create CAN configuration for periodic transmission
-    let can_config = CanConfig::new(0x520, 500_000, 250, 5000)
+    // Create CAN configuration for periodic transmission (200ms timeout, industry standard)
+    let can_config = CanConfig::new(0x520, 500_000, 250, 200)
         .without_filtering(); // Sender doesn't need filtering
 
     // Spawn CAN writer task with error handling and statistics
-    spawner.spawn(can_write_task(can, can_config))
-        .expect("Failed to spawn CAN write task");
-    
-    info!("CAN writer task spawned successfully");
+    match spawner.spawn(can_write_task(can, can_config)) {
+        Ok(_) => info!("CAN writer task spawned successfully"),
+        Err(_) => {
+            error!("CRITICAL: Cannot spawn CAN writer - out of memory!");
+            loop { defmt::flush(); }
+        }
+    }
 }

@@ -43,8 +43,8 @@ static PACKETS: StaticCell<PacketQueue<8, 8>> = StaticCell::new();
 static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 static STACK: StaticCell<Stack<'static>> = StaticCell::new();
 
-// Channel for CAN frames → UDP broadcast
-static CAN_CHANNEL: Channel<CriticalSectionRawMutex, Message, 8> = Channel::new();
+// Channel for CAN frames → UDP broadcast (size 256 to prevent frame loss)
+static CAN_CHANNEL: Channel<CriticalSectionRawMutex, Message, 256> = Channel::new();
 
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
@@ -108,21 +108,36 @@ async fn main(spawner: Spawner) {
     );
     let stack = STACK.init(stack);
 
-    // Create CAN configuration with 5-second timeout watchdog
-    let can_config = CanConfig::new(0x520, 500_000, 250, 5000)
-        .with_rx_timeout(5000);
+    // Create CAN configuration with 200ms timeout (industry standard)
+    let can_config = CanConfig::new(0x520, 500_000, 250, 200)
+        .with_rx_timeout(200);
 
     // Spawn network runner task
-    spawner.spawn(net_task(runner))
-        .expect("Failed to spawn net task");
+    match spawner.spawn(net_task(runner)) {
+        Ok(_) => info!("Network task spawned"),
+        Err(_) => {
+            error!("CRITICAL: Cannot spawn network task - out of memory!");
+            loop { defmt::flush(); }
+        }
+    }
 
     // Spawn CAN reader task with channel broadcasting
-    spawner.spawn(can_read_task_with_channel(can, can_config, CAN_CHANNEL.sender()))
-        .expect("Failed to spawn CAN read task");
+    match spawner.spawn(can_read_task_with_channel(can, can_config, CAN_CHANNEL.sender())) {
+        Ok(_) => info!("CAN read task spawned"),
+        Err(_) => {
+            error!("CRITICAL: Cannot spawn CAN reader - out of memory!");
+            loop { defmt::flush(); }
+        }
+    }
 
     // Spawn UDP broadcast task for remote logging
-    spawner.spawn(can_udp_broadcast_task(stack, CAN_CHANNEL.receiver()))
-        .expect("Failed to spawn UDP broadcast task");
+    match spawner.spawn(can_udp_broadcast_task(stack, CAN_CHANNEL.receiver())) {
+        Ok(_) => info!("UDP broadcast task spawned"),
+        Err(_) => {
+            error!("CRITICAL: Cannot spawn UDP broadcast - out of memory!");
+            loop { defmt::flush(); }
+        }
+    }
     
     info!("All tasks spawned successfully - CAN data broadcasting to UDP 255.255.255.255:9999");
 }
