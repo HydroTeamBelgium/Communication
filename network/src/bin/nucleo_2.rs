@@ -1,9 +1,10 @@
 //! Nucleo 2 - Sends CAN messages with real sensor data
 //!
 //! Sends periodic CAN messages with engine data using:
-//! - Proper error handling for transmission failures
-//! - Real sensor data simulation (not dummy increment)
-//! - Configurable CAN ID and transmission interval
+//! - All 17 SCS message types (0x300-0x310)
+//! - Professional test data generators from protocol module
+//! - Rotating through each message type
+//! - Realistic test data with incrementing values
 //! - Statistics and error tracking
 
 #![no_std]
@@ -16,7 +17,6 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use basis::prelude::*;
-// use basis::hal::create_net_config;
 
 use embassy_stm32::{
     SharedData, 
@@ -27,12 +27,9 @@ use embassy_stm32::{
 };
 use core::mem::MaybeUninit;
 
-
-
 // ============================================================================
 //                         STATIC ALLOCATIONS  
 // ============================================================================
-
 
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
@@ -55,27 +52,79 @@ async fn main(spawner: Spawner) {
     let mut config = Config::default();
     configure_clock_full(&mut config);
     
-    info!("Nucleo 2 (CAN sender) starting with improved error handling...");
+    info!("Nucleo 2 (CAN sender - all message types) starting...");
     
     // Initialize hardware
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
 
-    // Setup CAN
+    // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
-    can.set_bitrate(500_000);
+    can.set_bitrate(basis::hal::can::config::CAN_BITRATE_DEFAULT);
     let can = can.into_normal_mode();
-    info!("CAN Configured at 500 kbps");
+    info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
 
-    // Create CAN configuration for periodic transmission (200ms timeout, industry standard)
-    let can_config = CanConfig::new(0x520, 500_000, 250, 200)
-        .without_filtering(); // Sender doesn't need filtering
-
-    // Spawn CAN writer task with error handling and statistics
-    match spawner.spawn(can_write_task(can, can_config)) {
-        Ok(_) => info!("CAN writer task spawned successfully"),
+    // Spawn CAN writer task that cycles through all message types
+    match spawner.spawn(can_send_all_messages(can)) {
+        Ok(_) => info!("CAN multi-message writer task spawned successfully"),
         Err(_) => {
             error!("CRITICAL: Cannot spawn CAN writer - out of memory!");
             loop { defmt::flush(); }
         }
+    }
+}
+
+// ============================================================================
+//                      MULTI-MESSAGE TASK
+// ============================================================================
+
+/// Task that cycles through all 17 message types (0x300-0x310)
+/// 
+/// Uses professional test data generators from the protocol module.
+#[embassy_executor::task]
+async fn can_send_all_messages(
+    mut can: embassy_stm32::can::Can<'static>,
+) {
+    use embassy_time::Timer;
+    use basis::protocol::{ScsTestGenerator, SCS_MESSAGE_IDS};
+    
+    let mut generator = ScsTestGenerator::new();
+    let mut msg_count = 0u32;
+    
+    info!("Starting CAN message cycle: 0x300 → 0x310 ({} message types)", SCS_MESSAGE_IDS.len());
+    
+    loop {
+        for &msg_id in SCS_MESSAGE_IDS {
+            let (can_id, frame_data) = generator.generate_frame(msg_id);
+            
+            // Create CAN frame
+            let frame = match embassy_stm32::can::frame::Frame::new_extended(can_id, &frame_data) {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("CAN TX: Failed to create frame for ID 0x{:03X}: {}", can_id, defmt::Debug2Format(&e));
+                    continue;
+                }
+            };
+            
+            // Send frame
+            match can.write(&frame).await {
+                None => {
+                    trace!("CAN TX: ID=0x{:03X}, counter={}", can_id, generator.counter());
+                    msg_count += 1;
+                }
+                Some(_) => {
+                    warn!("CAN TX: Queue full for ID 0x{:03X}", can_id);
+                }
+            }
+            
+            // Print progress every cycle
+            if msg_count % (SCS_MESSAGE_IDS.len() as u32) == 0 && msg_count > 0 {
+                info!("CAN Cycle #{}: sent {} messages total", msg_count / (SCS_MESSAGE_IDS.len() as u32), msg_count);
+            }
+            
+            // Small delay between messages (250ms per message)
+            Timer::after_millis(250).await;
+        }
+        
+        generator.next_cycle();
     }
 }

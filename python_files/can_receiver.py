@@ -74,19 +74,31 @@ class EcuJsonData:
         self.timestamp = datetime.now()
 
     @staticmethod
-    def from_bytes(payload: bytes) -> Optional["EcuJsonData"]:
+    def from_bytes(payload: bytes, debug: bool = False) -> Optional["EcuJsonData"]:
         """Deserialize from variable-length payload: [LEN:1][JSON:...]"""
         if len(payload) < 1:
+            if debug:
+                print(f"[DEBUG] EcuJsonData: empty payload", file=sys.stderr)
             return None
 
         length = payload[0]
+        if debug:
+            print(f"[DEBUG] EcuJsonData: length={length}, payload_len={len(payload)}", file=sys.stderr)
+            
         if len(payload) < 1 + length:
+            if debug:
+                print(f"[DEBUG] EcuJsonData: truncated, expected {1+length} bytes got {len(payload)}", file=sys.stderr)
             return None
 
         try:
-            json_str = payload[1 : 1 + length].decode("utf-8")
+            json_bytes = payload[1 : 1 + length]
+            json_str = json_bytes.decode("utf-8")
+            if debug:
+                print(f"[DEBUG] EcuJsonData: decoded {len(json_str)} chars: {json_str[:100]}", file=sys.stderr)
             return EcuJsonData(json_str)
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as e:
+            if debug:
+                print(f"[DEBUG] EcuJsonData: UTF-8 decode error: {e}", file=sys.stderr)
             return None
 
     def __str__(self) -> str:
@@ -143,7 +155,10 @@ class CanReceiver:
                     msg_type = data[0]
 
                     if msg_type == MSG_TYPE_ECU_JSON:
-                        ecu_json = EcuJsonData.from_bytes(data[1:])
+                        payload = data[1:]
+                        if self.debug:
+                            print(f"[DEBUG] ECU JSON payload ({len(payload)} bytes): {payload.hex()}", file=sys.stderr)
+                        ecu_json = EcuJsonData.from_bytes(payload, debug=self.debug)
                         if ecu_json:
                             self.frame_count += 1
                             print(
@@ -151,10 +166,17 @@ class CanReceiver:
                             )
                         else:
                             self.error_count += 1
-                            print(
-                                f"[ERROR] Failed to parse ECU JSON from {addr}",
-                                file=sys.stderr,
-                            )
+                            if len(payload) > 0:
+                                first_byte = payload[0]
+                                print(
+                                    f"[ERROR] Failed to parse ECU JSON from {addr}: first_byte=0x{first_byte:02X}, len={len(payload)}",
+                                    file=sys.stderr,
+                                )
+                            else:
+                                print(
+                                    f"[ERROR] Failed to parse ECU JSON from {addr}: empty payload",
+                                    file=sys.stderr,
+                                )
                     elif msg_type == MSG_TYPE_CAN_FRAME:
                         frame = CanFrameData.from_bytes(data[1:], debug=self.debug)
                         if frame:

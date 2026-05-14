@@ -76,11 +76,11 @@ async fn main(spawner: Spawner) {
     // Initialize hardware
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
 
-    // Setup CAN
+    // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
-    can.set_bitrate(500_000);
+    can.set_bitrate(basis::hal::can::config::CAN_BITRATE_DEFAULT);
     let can = can.into_normal_mode();
-    info!("CAN Configured at 500 kbps");
+    info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
 
     // Setup Ethernet for UDP broadcast
     let device = Ethernet::new(
@@ -109,7 +109,7 @@ async fn main(spawner: Spawner) {
     let stack = STACK.init(stack);
 
     // Create CAN configuration with 200ms timeout (industry standard)
-    let can_config = CanConfig::new(0x520, 500_000, 250, 200)
+    let can_config = CanConfig::new(0x300, 500_000, 250, 200)
         .with_rx_timeout(200);
 
     // Spawn network runner task

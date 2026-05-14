@@ -18,7 +18,7 @@ pub struct CanConfig {
 impl Default for CanConfig {
     fn default() -> Self {
         Self {
-            can_id: 0x520,
+            can_id: 0x300,
             bitrate: 500_000,
             tx_interval_ms: 250,
             rx_timeout_ms: 5000,

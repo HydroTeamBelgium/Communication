@@ -67,7 +67,7 @@ pub async fn can_write_task(
         // Attempt transmission
         match can.write(&frame).await {
             None => {
-                trace!("CAN TX: ID={=u32}, seq={}, RPM={}", config.can_id, seq, engine_data.rpm);
+                trace!("CAN TX: ID={=u32}, seq={}, RPM={}, Throttle={}, Map={}, lambda={}", config.can_id, seq, engine_data.rpm, engine_data.throttle, engine_data.map, engine_data.lambda_scaled);
                 stats.tx_count += 1;
             }
             Some(_frame) => {
@@ -270,7 +270,7 @@ pub async fn can_read_task_with_channel(
                         Timer::after_millis(50)
                     ).await {
                         embassy_futures::select::Either::First(_) => {
-                            trace!("CAN broadcast to UDP: ID={=u32}, JSON sent", id_val);
+                            trace!("CAN broadcast to UDP: ID={=u32}, JSON sent, data: {:?}", id_val, json_str);
                             stats.rx_count += 1;
                         }
                         embassy_futures::select::Either::Second(_) => {
@@ -282,7 +282,7 @@ pub async fn can_read_task_with_channel(
                     debug!("CAN RX: ID={=u32}, parsed and sent JSON", id_val);
                 } else {
                     // Fallback: send as raw CAN frame if not recognized SCS message
-                    debug!("CAN RX: ID={=u32}, not recognized SCS message, falling back to raw frame", id_val);
+                    debug!("CAN RX: ID={=u32}, not recognized SCS message, falling back to raw frame, frame data: {:?}", id_val, frame_data);
                     
                     let can_msg = CanFrameData::new(id_val, {
                         let mut d = [0u8; 8];
@@ -460,7 +460,7 @@ pub async fn can_udp_broadcast_task(
         let msg = rx.receive().await;
         msg_count += 1;
 
-        let mut buf = [0u8; 32];
+        let mut buf = [0u8; 512];  // Increased from 32 to accommodate JSON payloads (1 byte type + 1 byte length + up to 256 bytes JSON)
         let len = msg.serialize(&mut buf);
 
         match socket.send_to(&buf[..len], broadcast_endpoint).await {

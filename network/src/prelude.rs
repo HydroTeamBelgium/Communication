@@ -22,3 +22,29 @@ pub use crate::tasks::net_task;
 
 // Re-export sensor drivers
 pub use crate::sensors::{ButtonDriver, ButtonConfig, PotDriver, PotConfig, AdcConfig, AdcSensor};
+
+// ============================================================================
+//                        UTILITY MACROS
+// ============================================================================
+
+/// Spawn a critical task that must succeed
+///
+/// Panics the board if task spawning fails (out of memory).
+/// Automatically logs success/failure.
+///
+/// # Example
+/// ```ignore
+/// spawn_critical!(spawner, my_task(), "My Critical Task");
+/// ```
+#[macro_export]
+macro_rules! spawn_critical {
+    ($spawner:expr, $task:expr, $name:expr) => {
+        match $spawner.spawn($task) {
+            Ok(_) => $crate::prelude::info!("{} spawned successfully", $name),
+            Err(_) => {
+                $crate::prelude::error!("CRITICAL: Cannot spawn {} - out of memory!", $name);
+                loop { defmt::flush(); }
+            }
+        }
+    };
+}
