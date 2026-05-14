@@ -32,7 +32,7 @@ async fn main(_spawner: Spawner) {
     let mut can = can::CanConfigurator::new(peripherals.FDCAN1, peripherals.PD0, peripherals.PD1, Irqs);
 
     // 250k bps
-    can.set_bitrate(250_000);
+    can.set_bitrate(500_000);
 
     //let mut can = can.into_internal_loopback_mode();
     let mut can = can.into_normal_mode();
