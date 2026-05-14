@@ -3,7 +3,7 @@
 /// Configuration for CAN communication
 #[derive(Clone, Copy, Debug)]
 pub struct CanConfig {
-    /// CAN message ID (extended frame)
+    /// CAN message ID (standard 11-bit frame for MaxxECU)
     pub can_id: u32,
     /// CAN bitrate in Hz
     pub bitrate: u32,
@@ -18,7 +18,7 @@ pub struct CanConfig {
 impl Default for CanConfig {
     fn default() -> Self {
         Self {
-            can_id: 0x300,
+            can_id: 0x520,
             bitrate: 500_000,
             tx_interval_ms: 250,
             rx_timeout_ms: 5000,

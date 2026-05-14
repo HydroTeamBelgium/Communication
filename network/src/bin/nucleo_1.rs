@@ -79,8 +79,44 @@ async fn main(spawner: Spawner) {
     // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
     can.set_bitrate(basis::hal::can::config::CAN_BITRATE_DEFAULT);
+
+    // MaxxECU default protocol uses classic CAN frames (11-bit IDs, 500 kbps).
+    // Enable edge filtering to reduce sensitivity to short noise spikes on the bus.
+    let fd_cfg = can
+        .config()
+        .set_frame_transmit(can::config::FrameTransmissionConfig::ClassicCanOnly)
+        .set_non_iso_mode(false)
+        .set_edge_filtering(true);
+    can.set_config(fd_cfg);
+
     let can = can.into_normal_mode();
     info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
+    // DIAGNOSTIC: Check FDCAN peripheral state (why is it entering Error Passive?)
+    {
+        let fdcan = &p.FDCAN1;
+        let cccr = fdcan.cccr.read();
+        let ecr = fdcan.ecr.read();
+        let psr = fdcan.psr.read();
+        
+        info!("FDCAN1 Diagnostic State:");
+        info!("  CCCR init={}, cce={}, ase={}, brse={}, fdoe={}, test={}", 
+            cccr.init(), cccr.cce(), cccr.ase(), cccr.brse(), cccr.fdoe(), cccr.test());
+        info!("  ECR tec={}, rec={}, rp={}, cel={}",
+            ecr.tec(), ecr.rec(), ecr.rp(), ecr.cel());
+        info!("  PSR lec={}, act={}, ep={}, ew={}, bo={}, dlec={}",
+            psr.lec(), psr.act(), psr.ep(), psr.ew(), psr.bo(), psr.dlec());
+        info!("  FDCAN in state: act={} ep={} ew={} bo={}", 
+            match psr.act() {
+                0 => "Synchronizing",
+                1 => "IdleWaiting",  
+                2 => "Receiver",
+                3 => "Transmitter",
+                _ => "Unknown",
+            },
+            psr.ep(), psr.ew(), psr.bo()
+        );
+    }
+
 
     // Setup Ethernet for UDP broadcast
     let device = Ethernet::new(
@@ -109,7 +145,7 @@ async fn main(spawner: Spawner) {
     let stack = STACK.init(stack);
 
     // Create CAN configuration with 200ms timeout (industry standard)
-    let can_config = CanConfig::new(0x300, 500_000, 250, 200)
+    let can_config = CanConfig::new(0x520, 500_000, 250, 200)
         .with_rx_timeout(200);
 
     // Spawn network runner task

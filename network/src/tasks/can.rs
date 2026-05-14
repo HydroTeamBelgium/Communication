@@ -3,7 +3,7 @@
 //! Provides robust CAN read/write task implementations with proper error handling,
 //! validation, and timeout protection. Includes UDP broadcast support for remote logging.
 
-use embassy_stm32::can::Can;
+use embassy_stm32::can::{enums::BusError, Can};
 use embassy_time::Timer;
 use embassy_sync::channel::Sender;
 use crate::config::{CanConfig, CanStats};
@@ -22,6 +22,57 @@ pub enum CanError {
     ReadTimeout,
     ReadFailed,
     ValidationFailed,
+}
+
+const MAXXECU_ID_MIN: u32 = 0x520;
+const MAXXECU_ID_MAX: u32 = 0x542;
+
+#[derive(Default)]
+struct BusErrorStats {
+    form: u32,
+    stuff: u32,
+    crc: u32,
+    ack: u32,
+    bit_recessive: u32,
+    bit_dominant: u32,
+    software: u32,
+    bus_warning: u32,
+    bus_passive: u32,
+    bus_off: u32,
+}
+
+impl BusErrorStats {
+    fn total(&self) -> u32 {
+        self.form
+            + self.stuff
+            + self.crc
+            + self.ack
+            + self.bit_recessive
+            + self.bit_dominant
+            + self.software
+            + self.bus_warning
+            + self.bus_passive
+            + self.bus_off
+    }
+
+    fn record(&mut self, err: &BusError) {
+        match err {
+            BusError::Form => self.form += 1,
+            BusError::Stuff => self.stuff += 1,
+            BusError::Crc => self.crc += 1,
+            BusError::Acknowledge => self.ack += 1,
+            BusError::BitRecessive => self.bit_recessive += 1,
+            BusError::BitDominant => self.bit_dominant += 1,
+            BusError::Software => self.software += 1,
+            BusError::BusWarning => self.bus_warning += 1,
+            BusError::BusPassive => self.bus_passive += 1,
+            BusError::BusOff => self.bus_off += 1,
+        }
+    }
+}
+
+fn is_maxxecu_standard_id(id: u32) -> bool {
+    (MAXXECU_ID_MIN..=MAXXECU_ID_MAX).contains(&id)
 }
 
 // ============================================================================
@@ -53,8 +104,8 @@ pub async fn can_write_task(
         let engine_data = EngineData::simulate_sensor_read(seq);
         let frame_data = engine_data.to_can_frame();
 
-        // Create CAN frame
-        let frame = match embassy_stm32::can::frame::Frame::new_extended(config.can_id, &frame_data) {
+        // Create CAN frame (MaxxECU uses standard 11-bit IDs, not extended)
+        let frame = match embassy_stm32::can::frame::Frame::new_standard(config.can_id as u16, &frame_data) {
             Ok(f) => f,
             Err(e) => {
                 error!("CAN TX: Failed to create frame: {}", defmt::Debug2Format(&e));
@@ -107,6 +158,8 @@ pub async fn can_read_task(
 
     let mut stats = CanStats::default();
     let mut expected_seq: u8 = 0;
+    let mut bus_error_stats = BusErrorStats::default();
+    let mut physical_hint_logged = false;
 
     info!("CAN Reader: Starting with {} ms timeout", config.rx_timeout_ms);
 
@@ -170,8 +223,47 @@ pub async fn can_read_task(
             }
 
             embassy_futures::select::Either::First(Err(e)) => {
-                error!("CAN RX: Read failed: {}", defmt::Debug2Format(&e));
+                bus_error_stats.record(&e);
+                match e {
+                    BusError::BusPassive => {
+                        if bus_error_stats.bus_passive % 50 == 1 {
+                            warn!(
+                                "CAN RX: BusPassive repeated (count={})",
+                                bus_error_stats.bus_passive
+                            );
+                        }
+                    }
+                    BusError::BusOff => {
+                        error!("CAN RX: BusOff - controller disconnected from bus");
+                    }
+                    _ => {
+                        error!("CAN RX: Read failed: {}", defmt::Debug2Format(&e));
+                    }
+                }
                 stats.rx_errors += 1;
+
+                if !physical_hint_logged {
+                    warn!(
+                        "CAN diagnostics: protocol errors usually mean physical-layer mismatch (CANH/CANL swap, missing 120R termination, wrong CAN bus selection, or baud mismatch)."
+                    );
+                    physical_hint_logged = true;
+                }
+
+                if bus_error_stats.total() % 100 == 0 {
+                    warn!(
+                        "CAN bus errors: total={}, form={}, stuff={}, crc={}, ack={}, bit0={}, bit1={}, warn={}, passive={}, off={}",
+                        bus_error_stats.total(),
+                        bus_error_stats.form,
+                        bus_error_stats.stuff,
+                        bus_error_stats.crc,
+                        bus_error_stats.ack,
+                        bus_error_stats.bit_recessive,
+                        bus_error_stats.bit_dominant,
+                        bus_error_stats.bus_warning,
+                        bus_error_stats.bus_passive,
+                        bus_error_stats.bus_off,
+                    );
+                }
             }
 
             embassy_futures::select::Either::Second(_) => {
@@ -220,6 +312,9 @@ pub async fn can_read_task_with_channel(
     use heapless::String;
 
     let mut stats = CanStats::default();
+    let mut bus_error_stats = BusErrorStats::default();
+    let mut consecutive_bus_errors = 0u32;
+    let mut physical_hint_logged = false;
 
     info!("CAN Reader with UDP broadcast (SCS protocol): Starting with {} ms timeout", config.rx_timeout_ms);
 
@@ -229,14 +324,38 @@ pub async fn can_read_task_with_channel(
         match embassy_futures::select::select(can.read(), timeout).await {
             embassy_futures::select::Either::First(Ok(envelope)) => {
                 let frame = &envelope.frame;
+                consecutive_bus_errors = 0;
 
                 // Extract CAN ID
-                let id_val: u32 = match frame.id() {
-                    Id::Standard(id) => id.as_raw() as u32,
-                    Id::Extended(id) => id.as_raw(),
+                let (id_val, is_standard): (u32, bool) = match frame.id() {
+                    Id::Standard(id) => (id.as_raw() as u32, true),
+                    Id::Extended(id) => (id.as_raw(), false),
                 };
 
+                // DEBUG: Log all received frames regardless of filtering
+                info!("CAN RX: Raw frame ID=0x{:03X} [STD={}] DLC={}", id_val, is_standard, frame.data().len());
+
+                // MaxxECU default protocol uses 11-bit standard IDs only.
+                if !is_standard {
+                    debug!("CAN RX: Ignoring extended frame ID=0x{:03X}", id_val);
+                    continue;
+                }
+
+                if !is_maxxecu_standard_id(id_val) {
+                    debug!("CAN RX: Ignoring non-MaxxECU ID=0x{:03X} (outside 0x520-0x542 range)", id_val);
+                    continue;
+                }
+
                 let frame_data = frame.data();
+
+                // MaxxECU default protocol transmits fixed 8-byte payloads.
+                if frame_data.len() != 8 {
+                    warn!("CAN RX: Dropping ID=0x{:03X} with DLC={} (expected 8)", id_val, frame_data.len());
+                    stats.rx_errors += 1;
+                    continue;
+                }
+
+                info!("CAN RX: Accepted MaxxECU frame ID=0x{:03X} DLC=8", id_val);
 
                 // Try to parse using SCS protocol
                 if let Some(can_msg) = CanMessage::from_frame(id_val, frame_data) {
@@ -310,8 +429,64 @@ pub async fn can_read_task_with_channel(
             }
 
             embassy_futures::select::Either::First(Err(e)) => {
-                error!("CAN RX: Read failed: {}", defmt::Debug2Format(&e));
+                bus_error_stats.record(&e);
+                consecutive_bus_errors = consecutive_bus_errors.saturating_add(1);
+                match e {
+                    BusError::BusPassive => {
+                        if bus_error_stats.bus_passive % 50 == 1 {
+                            warn!(
+                                "CAN RX: BusPassive repeated (count={}). Controller stuck in Error Passive state (TEC≥128). Per Bosch CAN spec this occurs when no ACK received. Check: 1) Is MaxxECU powered? 2) Transmitting on CAN1? 3) Bus termination 60Ω?",
+                                bus_error_stats.bus_passive
+                            );
+                        }
+                        
+                        // Recovery strategy: If stuck in BusPassive for too long, attempt controlled reset
+                        // Per STM32 FDCAN errata: Error Passive state can persist without reaching Bus Off
+                        // if the error counters are pegged at 128. Hard reset of FDCAN clears this.
+                        if bus_error_stats.bus_passive >= 500 && bus_error_stats.bus_passive % 500 == 1 {
+                            error!("CAN RX: ERROR PASSIVE RECOVERY ATTEMPT - Controller stuck in Error Passive ({}+ errors)", bus_error_stats.bus_passive);
+                            error!("CAN RX: Likely causes: (1) MaxxECU not connected/powered (2) No ACK from peer (3) Baud mismatch (4) Transceiver issue");
+                            error!("CAN RX: Physical layer diagnostic needed - no software fix will help if hardware is disconnected");
+                            // Note: Full reset would require dropping and reinitializing Can peripheral, which is not async-safe here
+                            // Recommend hardware power cycle of MaxxECU and Nucleo if this persists
+                        }
+                    }
+                    BusError::BusOff => {
+                        error!("CAN RX: BusOff - controller disconnected from bus");
+                    }
+                    _ => {
+                        error!("CAN RX: Read failed: {}", defmt::Debug2Format(&e));
+                    }
+                }
                 stats.rx_errors += 1;
+
+                if !physical_hint_logged {
+                    warn!(
+                        "CAN: physical-layer error detected - check bus wiring and termination"
+                    );
+                    physical_hint_logged = true;
+                }
+
+                if bus_error_stats.total() % 100 == 0 {
+                    warn!(
+                        "CAN bus errors: total={}, form={}, stuff={}, crc={}, ack={}, bit0={}, bit1={}, warn={}, passive={}, off={}",
+                        bus_error_stats.total(),
+                        bus_error_stats.form,
+                        bus_error_stats.stuff,
+                        bus_error_stats.crc,
+                        bus_error_stats.ack,
+                        bus_error_stats.bit_recessive,
+                        bus_error_stats.bit_dominant,
+                        bus_error_stats.bus_warning,
+                        bus_error_stats.bus_passive,
+                        bus_error_stats.bus_off,
+                    );
+                }
+
+                // Throttle log storm if the controller stays in a bad bus state.
+                if consecutive_bus_errors >= 25 {
+                    Timer::after_millis(50).await;
+                }
             }
 
             embassy_futures::select::Either::Second(_) => {
@@ -338,19 +513,9 @@ pub async fn can_read_task_with_channel(
 
 /// Validate CAN frame data
 fn validate_frame(frame_data: &[u8], _config: &CanConfig) -> Result<(), &'static str> {
-    // Minimum length check
-    if frame_data.len() < 6 {
-        return Err("Frame too short");
-    }
-
-    // Maximum standard CAN frame length
-    if frame_data.len() > 8 {
-        return Err("Frame too long");
-    }
-
-    // Validate throttle field (byte 2)
-    if frame_data[2] > 100 {
-        return Err("Throttle out of range");
+    // MaxxECU default protocol transmits fixed-size 8-byte CAN frames.
+    if frame_data.len() != 8 {
+        return Err("Expected DLC=8");
     }
 
     Ok(())
