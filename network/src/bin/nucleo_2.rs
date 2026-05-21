@@ -1,10 +1,9 @@
 //! Nucleo 2 - Sends CAN messages with real sensor data
 //!
 //! Sends periodic CAN messages with engine data using:
-//! - All 17 SCS message types (0x300-0x310)
-//! - Professional test data generators from protocol module
-//! - Rotating through each message type
-//! - Realistic test data with incrementing values
+//! - ECU-specific test data generators from the protocol module
+//! - Rotating through each documented CAN message for the selected ECU
+//! - Standard 11-bit CAN frames matching the ECU documentation
 //! - Statistics and error tracking
 
 #![no_std]
@@ -17,6 +16,7 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use basis::prelude::*;
+use basis::config::can::{EcuType, NUCLEO_2_ECU_MODE, MAXX_TEST_FRAME_INTERVAL_MS, SCS_TEST_FRAME_INTERVAL_MS};
 
 use embassy_stm32::{
     SharedData, 
@@ -25,6 +25,7 @@ use embassy_stm32::{
     bind_interrupts,
     peripherals, 
 };
+use embassy_time::Timer;
 use core::mem::MaybeUninit;
 
 // ============================================================================
@@ -63,7 +64,7 @@ async fn main(spawner: Spawner) {
     let can = can.into_normal_mode();
     info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
 
-    // Spawn CAN writer task that cycles through all message types
+    // Spawn CAN writer task that cycles through the ECU-specific message set
     match spawner.spawn(can_send_all_messages(can)) {
         Ok(_) => info!("CAN multi-message writer task spawned successfully"),
         Err(_) => {
@@ -77,54 +78,93 @@ async fn main(spawner: Spawner) {
 //                      MULTI-MESSAGE TASK
 // ============================================================================
 
-/// Task that cycles through all 17 message types (0x300-0x310)
-/// 
-/// Uses professional test data generators from the protocol module.
+/// Task that cycles through the selected ECU's documented CAN message set.
 #[embassy_executor::task]
 async fn can_send_all_messages(
     mut can: embassy_stm32::can::Can<'static>,
 ) {
-    use embassy_time::Timer;
+    match NUCLEO_2_ECU_MODE {
+        EcuType::ScsDelta => send_scs_cycle(&mut can).await,
+        EcuType::MaxxEcu => send_maxx_cycle(&mut can).await,
+    }
+}
+
+async fn send_scs_cycle(can: &mut embassy_stm32::can::Can<'static>) {
     use basis::protocol::{ScsTestGenerator, SCS_MESSAGE_IDS};
-    
+
     let mut generator = ScsTestGenerator::new();
     let mut msg_count = 0u32;
-    
-    info!("Starting CAN message cycle: 0x300 → 0x310 ({} message types)", SCS_MESSAGE_IDS.len());
-    
+
+    info!("Starting CAN message cycle: SCS 0x300 → 0x310 ({} message types)", SCS_MESSAGE_IDS.len());
+
     loop {
         for &msg_id in SCS_MESSAGE_IDS {
             let (can_id, frame_data) = generator.generate_frame(msg_id);
-            
-            // Create CAN frame
-            let frame = match embassy_stm32::can::frame::Frame::new_extended(can_id, &frame_data) {
+            let frame = match embassy_stm32::can::frame::Frame::new_standard(can_id as u16, &frame_data) {
                 Ok(f) => f,
                 Err(e) => {
-                    error!("CAN TX: Failed to create frame for ID 0x{:03X}: {}", can_id, defmt::Debug2Format(&e));
+                    error!("CAN TX: Failed to create SCS frame for ID 0x{:03X}: {}", can_id, defmt::Debug2Format(&e));
                     continue;
                 }
             };
-            
-            // Send frame
+
             match can.write(&frame).await {
                 None => {
-                    trace!("CAN TX: ID=0x{:03X}, counter={}", can_id, generator.counter());
+                    trace!("CAN TX: SCS ID=0x{:03X}, counter={}", can_id, generator.counter());
                     msg_count += 1;
                 }
                 Some(_) => {
-                    warn!("CAN TX: Queue full for ID 0x{:03X}", can_id);
+                    warn!("CAN TX: Queue full for SCS ID 0x{:03X}", can_id);
                 }
             }
-            
-            // Print progress every cycle
+
             if msg_count % (SCS_MESSAGE_IDS.len() as u32) == 0 && msg_count > 0 {
-                info!("CAN Cycle #{}: sent {} messages total", msg_count / (SCS_MESSAGE_IDS.len() as u32), msg_count);
+                info!("CAN Cycle #{}: sent {} SCS messages total", msg_count / (SCS_MESSAGE_IDS.len() as u32), msg_count);
             }
-            
-            // Small delay between messages (250ms per message)
-            Timer::after_millis(250).await;
+
+            Timer::after_millis(SCS_TEST_FRAME_INTERVAL_MS).await;
         }
-        
+
+        generator.next_cycle();
+    }
+}
+
+async fn send_maxx_cycle(can: &mut embassy_stm32::can::Can<'static>) {
+    use basis::protocol::{MaxxTestGenerator, MAXX_MESSAGE_IDS};
+
+    let mut generator = MaxxTestGenerator::new();
+    let mut msg_count = 0u32;
+
+    info!("Starting CAN message cycle: MaxxECU documented message set ({} message types)", MAXX_MESSAGE_IDS.len());
+
+    loop {
+        for &msg_id in MAXX_MESSAGE_IDS {
+            let (can_id, frame_data) = generator.generate_frame(msg_id);
+            let frame = match embassy_stm32::can::frame::Frame::new_standard(can_id as u16, &frame_data) {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("CAN TX: Failed to create MaxxECU frame for ID 0x{:03X}: {}", can_id, defmt::Debug2Format(&e));
+                    continue;
+                }
+            };
+
+            match can.write(&frame).await {
+                None => {
+                    trace!("CAN TX: MaxxECU ID=0x{:03X}, counter={}", can_id, generator.counter());
+                    msg_count += 1;
+                }
+                Some(_) => {
+                    warn!("CAN TX: Queue full for MaxxECU ID 0x{:03X}", can_id);
+                }
+            }
+
+            if msg_count % (MAXX_MESSAGE_IDS.len() as u32) == 0 && msg_count > 0 {
+                info!("CAN Cycle #{}: sent {} MaxxECU messages total", msg_count / (MAXX_MESSAGE_IDS.len() as u32), msg_count);
+            }
+
+            Timer::after_millis(MAXX_TEST_FRAME_INTERVAL_MS).await;
+        }
+
         generator.next_cycle();
     }
 }

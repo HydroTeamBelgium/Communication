@@ -3,6 +3,8 @@
 //! Centralized definitions for all CAN message IDs, types, and ranges.
 //! Used across Rust binaries and Python receiver.
 
+#![allow(non_upper_case_globals)]
+
 // ============================================================================
 //                         CAN MESSAGE IDs
 // ============================================================================

@@ -3,13 +3,15 @@
 //! Defines all message types used for communication between boards.
 
 pub mod messages;
-pub mod can_scs;
-pub mod engine_data;
-pub mod generators;
-pub mod constants;
+#[path = "can_scs.rs"]
+pub mod scs;
+#[path = "constants.rs"]
+pub mod scs_constants;
+pub mod ecu;
+pub mod maxx;
 
 pub use messages::*;
-pub use can_scs::*;
-pub use engine_data::*;
-pub use generators::*;
-pub use constants::*;
+pub use scs::*;
+pub use scs_constants::*;
+pub use ecu::*;
+pub use maxx::*;

@@ -1,10 +1,36 @@
 //! CAN configuration and types
 
+/// Supported ECU protocol families.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EcuType {
+    ScsDelta,
+    MaxxEcu,
+}
+
+impl EcuType {
+    pub const fn primary_can_id(self) -> u32 {
+        match self {
+            Self::ScsDelta => 0x300,
+            Self::MaxxEcu => 0x520,
+        }
+    }
+}
+
+/// Default ECU selection for each board role.
+/// Keep these centralized so the binaries do not carry hidden local policy.
+pub const NUCLEO_1_ECU_MODE: EcuType = EcuType::MaxxEcu;
+pub const NUCLEO_2_ECU_MODE: EcuType = EcuType::MaxxEcu;
+
+/// Centralized timing defaults for the ECU test setups.
+pub const SCS_TEST_FRAME_INTERVAL_MS: u64 = 250;
+pub const MAXX_TEST_FRAME_INTERVAL_MS: u64 = 100;
+pub const DEFAULT_CAN_RX_TIMEOUT_MS: u64 = 200;
+
 /// Configuration for CAN communication
 #[derive(Clone, Copy, Debug)]
 pub struct CanConfig {
-    /// CAN message ID (standard 11-bit frame for MaxxECU)
-    pub can_id: u32,
+    /// Selected ECU protocol family.
+    pub ecu_type: EcuType,
     /// CAN bitrate in Hz
     pub bitrate: u32,
     /// TX interval in milliseconds (for periodic senders)
@@ -18,10 +44,10 @@ pub struct CanConfig {
 impl Default for CanConfig {
     fn default() -> Self {
         Self {
-            can_id: 0x520,
+            ecu_type: NUCLEO_1_ECU_MODE,
             bitrate: 500_000,
-            tx_interval_ms: 250,
-            rx_timeout_ms: 5000,
+            tx_interval_ms: SCS_TEST_FRAME_INTERVAL_MS,
+            rx_timeout_ms: 5_000,
             enable_filtering: true,
         }
     }
@@ -29,9 +55,9 @@ impl Default for CanConfig {
 
 impl CanConfig {
     /// Create a new CAN configuration
-    pub const fn new(can_id: u32, bitrate: u32, tx_interval_ms: u64, rx_timeout_ms: u64) -> Self {
+    pub const fn new(ecu_type: EcuType, bitrate: u32, tx_interval_ms: u64, rx_timeout_ms: u64) -> Self {
         Self {
-            can_id,
+            ecu_type,
             bitrate,
             tx_interval_ms,
             rx_timeout_ms,
@@ -39,30 +65,10 @@ impl CanConfig {
         }
     }
 
-    /// Set custom RX timeout
-    pub const fn with_rx_timeout(mut self, ms: u64) -> Self {
-        self.rx_timeout_ms = ms;
-        self
+    /// Get the primary CAN ID associated with the selected ECU type.
+    pub const fn primary_can_id(&self) -> u32 {
+        self.ecu_type.primary_can_id()
     }
-
-    /// Disable hardware filtering
-    pub const fn without_filtering(mut self) -> Self {
-        self.enable_filtering = false;
-        self
-    }
-}
-
-/// CAN frame validation error types
-#[derive(Clone, Copy, Debug)]
-pub enum CanValidationError {
-    /// Data length code mismatch
-    DlcMismatch { expected: usize, got: usize },
-    /// Sequence number gap detected
-    SequenceGap { expected: u8, got: u8 },
-    /// Invalid checksum
-    ChecksumInvalid,
-    /// Frame timeout
-    Timeout,
 }
 
 /// CAN statistics for diagnostics

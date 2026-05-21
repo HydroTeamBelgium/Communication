@@ -18,6 +18,8 @@ use panic_probe as _;
 
 use basis::prelude::*;
 use basis::hal::create_net_config;
+use basis::tasks::can::{can_read_maxx_task_with_channel, can_read_scs_task_with_channel};
+use basis::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE, SCS_TEST_FRAME_INTERVAL_MS};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_stm32::{
@@ -91,32 +93,6 @@ async fn main(spawner: Spawner) {
 
     let can = can.into_normal_mode();
     info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
-    // DIAGNOSTIC: Check FDCAN peripheral state (why is it entering Error Passive?)
-    {
-        let fdcan = &p.FDCAN1;
-        let cccr = fdcan.cccr.read();
-        let ecr = fdcan.ecr.read();
-        let psr = fdcan.psr.read();
-        
-        info!("FDCAN1 Diagnostic State:");
-        info!("  CCCR init={}, cce={}, ase={}, brse={}, fdoe={}, test={}", 
-            cccr.init(), cccr.cce(), cccr.ase(), cccr.brse(), cccr.fdoe(), cccr.test());
-        info!("  ECR tec={}, rec={}, rp={}, cel={}",
-            ecr.tec(), ecr.rec(), ecr.rp(), ecr.cel());
-        info!("  PSR lec={}, act={}, ep={}, ew={}, bo={}, dlec={}",
-            psr.lec(), psr.act(), psr.ep(), psr.ew(), psr.bo(), psr.dlec());
-        info!("  FDCAN in state: act={} ep={} ew={} bo={}", 
-            match psr.act() {
-                0 => "Synchronizing",
-                1 => "IdleWaiting",  
-                2 => "Receiver",
-                3 => "Transmitter",
-                _ => "Unknown",
-            },
-            psr.ep(), psr.ew(), psr.bo()
-        );
-    }
-
 
     // Setup Ethernet for UDP broadcast
     let device = Ethernet::new(
@@ -144,9 +120,13 @@ async fn main(spawner: Spawner) {
     );
     let stack = STACK.init(stack);
 
-    // Create CAN configuration with 200ms timeout (industry standard)
-    let can_config = CanConfig::new(0x520, 500_000, 250, 200)
-        .with_rx_timeout(200);
+    // Create CAN configuration with centralized timeout settings.
+    let can_config = CanConfig::new(
+        NUCLEO_1_ECU_MODE,
+        500_000,
+        SCS_TEST_FRAME_INTERVAL_MS,
+        DEFAULT_CAN_RX_TIMEOUT_MS,
+    );
 
     // Spawn network runner task
     match spawner.spawn(net_task(runner)) {
@@ -157,8 +137,13 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    // Spawn CAN reader task with channel broadcasting
-    match spawner.spawn(can_read_task_with_channel(can, can_config, CAN_CHANNEL.sender())) {
+    // Spawn CAN reader task with ECU-specific parser selection
+    let spawn_result = match NUCLEO_1_ECU_MODE {
+        basis::config::can::EcuType::ScsDelta => spawner.spawn(can_read_scs_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
+        basis::config::can::EcuType::MaxxEcu => spawner.spawn(can_read_maxx_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
+    };
+
+    match spawn_result {
         Ok(_) => info!("CAN read task spawned"),
         Err(_) => {
             error!("CRITICAL: Cannot spawn CAN reader - out of memory!");

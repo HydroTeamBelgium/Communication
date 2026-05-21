@@ -16,8 +16,8 @@ pub use static_cell::StaticCell;
 // Re-export our modules
 pub use crate::config::*;
 pub use crate::protocol::*;
-pub use crate::hal::*;
-pub use crate::tasks::can::{can_write_task, can_read_task, can_read_task_with_channel, can_udp_broadcast_task};
+pub use crate::hal::{configure_clock_full, create_net_config};
+pub use crate::tasks::can::{can_read_scs_task_with_channel, can_read_maxx_task_with_channel, can_udp_broadcast_task};
 pub use crate::tasks::net_task;
 
 // Re-export sensor drivers

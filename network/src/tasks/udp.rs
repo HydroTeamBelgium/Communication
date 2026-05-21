@@ -29,10 +29,10 @@ pub fn log_message(msg: &Message, sender: &UdpMetadata, counter: u32) {
             }
         }
         Message::Pot(reading) => {
-            info!("[{}] Pot: {=f32} V from {}", counter, reading.voltage, sender);
+            info!("[{}] Pot: {} V from {}", counter, reading.voltage, sender);
         }
         Message::CanFrame(can_data) => {
-            info!("[{}] CAN ID={=u32} DLC={} from {}", counter, can_data.can_id, can_data.dlc, sender);
+            info!("[{}] CAN ID={} DLC={} from {}", counter, can_data.can_id, can_data.dlc, sender);
         }
         Message::EcuJson(ecu_data) => {
             info!("[{}] ECU JSON: {} from {}", counter, ecu_data.json.as_str(), sender);
