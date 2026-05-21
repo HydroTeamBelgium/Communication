@@ -71,8 +71,19 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
     let mut bus_error_stats = BusErrorStats::default();
     let mut consecutive_bus_errors = 0u32;
     let mut physical_hint_logged = false;
+    let mut ever_seen_valid_frame = false;
 
-    info!("CAN Reader (generic): Starting with {} ms timeout", config.rx_timeout_ms);
+    let ecu_label = match config.ecu_type {
+        crate::config::can::EcuType::ScsDelta => "ScsDelta",
+        crate::config::can::EcuType::MaxxEcu => "MaxxEcu",
+    };
+
+    info!(
+        "CAN Reader (generic): Starting with {} ms timeout, bitrate={} bps, ECU={}",
+        config.rx_timeout_ms,
+        config.bitrate,
+        ecu_label
+    );
 
     loop {
         let timeout = Timer::after_millis(config.rx_timeout_ms);
@@ -81,6 +92,7 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
             embassy_futures::select::Either::First(Ok(envelope)) => {
                 let frame = &envelope.frame;
                 consecutive_bus_errors = 0;
+                ever_seen_valid_frame = true;
 
                 // Extract CAN ID
                 let (id_val, is_standard): (u32, bool) = match frame.id() {
@@ -132,14 +144,14 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
                     BusError::BusPassive => {
                         if bus_error_stats.bus_passive % 50 == 1 {
                             warn!(
-                                "CAN RX: BusPassive repeated (count={}). Controller stuck in Error Passive state (TEC≥128). Per CAN spec this occurs when no ACK received. Check: 1) Is ECU powered? 2) Transmitting on correct CAN bus? 3) Bus termination 60Ω?",
+                                "CAN RX: BusPassive repeated (count={}). Controller is in Error Passive, but that does not only mean no ACK. If no valid frame has been seen yet, prioritize bitrate/clock mismatch, wrong bus, ECU power, transceiver, and termination checks.",
                                 bus_error_stats.bus_passive
                             );
                         }
 
                         if bus_error_stats.bus_passive >= 500 && bus_error_stats.bus_passive % 500 == 1 {
                             error!("CAN RX: ERROR PASSIVE RECOVERY ATTEMPT - Controller stuck in Error Passive ({}+ errors)", bus_error_stats.bus_passive);
-                            error!("CAN RX: Likely causes: (1) peer not connected/powered (2) No ACK from peer (3) Baud mismatch (4) Transceiver issue");
+                            error!("CAN RX: Likely causes: (1) wrong bitrate or FDCAN kernel clock (2) ECU on another bus (3) ECU not powered (4) transceiver / wiring issue");
                         }
                     }
                     BusError::BusOff => {
@@ -154,6 +166,12 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
                 if !physical_hint_logged {
                     warn!("CAN: physical-layer error detected - check bus wiring and termination");
                     physical_hint_logged = true;
+                }
+
+                if !ever_seen_valid_frame && bus_error_stats.total() % 25 == 1 {
+                    warn!(
+                        "CAN RX: no valid frame decoded yet; this strongly suggests clock/bitrate mismatch, wrong bus, or a filter/setup problem rather than a parser issue"
+                    );
                 }
 
                 if bus_error_stats.total() % 100 == 0 {

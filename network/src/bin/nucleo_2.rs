@@ -16,17 +16,19 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use basis::prelude::*;
-use basis::config::can::{EcuType, NUCLEO_2_ECU_MODE, MAXX_TEST_FRAME_INTERVAL_MS, SCS_TEST_FRAME_INTERVAL_MS};
+use basis::config::can::{EcuType, NUCLEO_2_ECU_MODE};
 
 use embassy_stm32::{
     SharedData, 
     Config,
     can,
     bind_interrupts,
+    can::config::NominalBitTiming,
     peripherals, 
 };
 use embassy_time::Timer;
 use core::mem::MaybeUninit;
+use core::num::{NonZeroU16, NonZeroU8};
 
 // ============================================================================
 //                         STATIC ALLOCATIONS  
@@ -60,7 +62,40 @@ async fn main(spawner: Spawner) {
 
     // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
-    can.set_bitrate(basis::hal::can::config::CAN_BITRATE_DEFAULT);
+    let ecu_label = match NUCLEO_2_ECU_MODE {
+        basis::config::can::EcuType::ScsDelta => "ScsDelta",
+        basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
+    };
+
+    let fd_cfg = can
+        .config()
+        .set_frame_transmit(can::config::FrameTransmissionConfig::ClassicCanOnly)
+        .set_non_iso_mode(false)
+        .set_edge_filtering(false)
+        .set_nominal_bit_timing(NominalBitTiming {
+            prescaler: NonZeroU16::new(5).unwrap(),
+            seg1: NonZeroU8::new(7).unwrap(),
+            seg2: NonZeroU8::new(2).unwrap(),
+            sync_jump_width: NonZeroU8::new(1).unwrap(),
+        });
+    can.set_config(fd_cfg);
+
+    let nominal = can.config().nbtr;
+    let sample_point_permille = (1000 * (1 + nominal.seg1.get() as u16))
+        / (1 + nominal.seg1.get() as u16 + nominal.seg2.get() as u16);
+    info!(
+        "CAN debug: board=Nucleo2, ECU mode={}, bitrate={} bps, pins=PD0/PD1",
+        ecu_label,
+        basis::hal::can::config::CAN_BITRATE_DEFAULT
+    );
+    info!(
+        "CAN timing: prescaler={}, seg1={}, seg2={}, sjw={}, sample_point={} permille",
+        nominal.prescaler.get(),
+        nominal.seg1.get(),
+        nominal.seg2.get(),
+        nominal.sync_jump_width.get(),
+        sample_point_permille
+    );
     let can = can.into_normal_mode();
     info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
 

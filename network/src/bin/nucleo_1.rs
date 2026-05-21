@@ -19,19 +19,21 @@ use panic_probe as _;
 use basis::prelude::*;
 use basis::hal::create_net_config;
 use basis::tasks::can::{can_read_maxx_task_with_channel, can_read_scs_task_with_channel};
-use basis::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE, SCS_TEST_FRAME_INTERVAL_MS};
+use basis::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_stm32::{
     SharedData, 
     can,
     bind_interrupts,
+    can::config::NominalBitTiming,
     Config,
     peripherals,
     eth::{self, Ethernet},
     rng::InterruptHandler as RngInterruptHandler,
 };
 use core::mem::MaybeUninit;
+use core::num::{NonZeroU16, NonZeroU8};
 
 // ============================================================================
 //                         BOARD CONFIGURATION
@@ -80,16 +82,41 @@ async fn main(spawner: Spawner) {
 
     // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
-    can.set_bitrate(basis::hal::can::config::CAN_BITRATE_DEFAULT);
+    let ecu_label = match NUCLEO_1_ECU_MODE {
+        basis::config::can::EcuType::ScsDelta => "ScsDelta",
+        basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
+    };
 
-    // MaxxECU default protocol uses classic CAN frames (11-bit IDs, 500 kbps).
-    // Enable edge filtering to reduce sensitivity to short noise spikes on the bus.
     let fd_cfg = can
         .config()
         .set_frame_transmit(can::config::FrameTransmissionConfig::ClassicCanOnly)
         .set_non_iso_mode(false)
-        .set_edge_filtering(true);
+        .set_edge_filtering(false)
+        .set_nominal_bit_timing(NominalBitTiming {
+            prescaler: NonZeroU16::new(5).unwrap(),
+            seg1: NonZeroU8::new(7).unwrap(),
+            seg2: NonZeroU8::new(2).unwrap(),
+            sync_jump_width: NonZeroU8::new(1).unwrap(),
+        });
     can.set_config(fd_cfg);
+
+    let nominal = can.config().nbtr;
+    let sample_point_permille = (1000 * (1 + nominal.seg1.get() as u16))
+        / (1 + nominal.seg1.get() as u16 + nominal.seg2.get() as u16);
+    info!(
+        "CAN debug: board=Nucleo1, ECU mode={}, bitrate={} bps, rx_timeout={} ms, pins=PD0/PD1",
+        ecu_label,
+        basis::hal::can::config::CAN_BITRATE_DEFAULT,
+        DEFAULT_CAN_RX_TIMEOUT_MS
+    );
+    info!(
+        "CAN timing: prescaler={}, seg1={}, seg2={}, sjw={}, sample_point={} permille",
+        nominal.prescaler.get(),
+        nominal.seg1.get(),
+        nominal.seg2.get(),
+        nominal.sync_jump_width.get(),
+        sample_point_permille
+    );
 
     let can = can.into_normal_mode();
     info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
@@ -123,8 +150,8 @@ async fn main(spawner: Spawner) {
     // Create CAN configuration with centralized timeout settings.
     let can_config = CanConfig::new(
         NUCLEO_1_ECU_MODE,
-        500_000,
-        SCS_TEST_FRAME_INTERVAL_MS,
+        basis::hal::can::config::CAN_BITRATE_DEFAULT,
+        0,
         DEFAULT_CAN_RX_TIMEOUT_MS,
     );
 

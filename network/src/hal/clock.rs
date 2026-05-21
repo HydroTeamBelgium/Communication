@@ -2,6 +2,7 @@
 //!
 //! Provides standard clock configurations for the Nucleo boards.
 
+use defmt::info;
 use embassy_stm32::Config;
 use embassy_stm32::rcc::*;
 
@@ -19,7 +20,7 @@ pub fn configure_clock_full(config: &mut Config) {
         freq: embassy_stm32::time::Hertz(25_000_000),
         mode: HseMode::Oscillator,
     });
-    config.rcc.mux.fdcansel = mux::Fdcansel::HSE;
+    config.rcc.mux.fdcansel = mux::Fdcansel::PLL1_Q;
 
     
     // PLL1: System clock
@@ -52,6 +53,9 @@ pub fn configure_clock_full(config: &mut Config) {
     config.rcc.supply_config = SupplyConfig::DirectSMPS;
     config.rcc.mux.usbsel = mux::Usbsel::HSI48;
     config.rcc.mux.adcsel = mux::Adcsel::PLL2_P;
+
+    info!("Clock config: HSE=25MHz oscillator, PLL1=HSI/4*50/2, PLL2=HSI/4*50/8, FDCAN kernel=HSE");
+    info!("Clock debug: if Nucleo loopback works but ECU/ESP32 does not, verify the actual HSE source/frequency and FDCAN bitrate math first");
 }
 
 /// Configure clocks for networking only (no ADC)
@@ -79,4 +83,6 @@ pub fn configure_clock_network_only(config: &mut Config) {
     config.rcc.voltage_scale = VoltageScale::Scale1;
     config.rcc.supply_config = SupplyConfig::DirectSMPS;
     config.rcc.mux.usbsel = mux::Usbsel::HSI48;
+
+    info!("Clock config: network-only mode uses PLL1 from HSI and leaves FDCAN disabled");
 }
