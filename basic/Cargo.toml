@@ -24,6 +24,7 @@ embedded-hal-1 = { package = "embedded-hal", version = "1.0" }
 embedded-hal-async = { version = "1.0" }
 embedded-nal-async = "0.8.0"
 embedded-io-async = { version = "0.6.1" }
+embedded-can = { version = "0.4", default-features = false }
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 heapless = { version = "0.8", default-features = false }
 rand_core = "0.6.3"
