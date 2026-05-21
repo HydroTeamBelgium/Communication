@@ -86,19 +86,21 @@ async fn main(spawner: Spawner) {
         basis::config::can::EcuType::ScsDelta => "ScsDelta",
         basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
     };
+    can.set_bitrate(500_000);
 
-    let fd_cfg = can
-        .config()
-        .set_frame_transmit(can::config::FrameTransmissionConfig::ClassicCanOnly)
-        .set_non_iso_mode(false)
-        .set_edge_filtering(false)
-        .set_nominal_bit_timing(NominalBitTiming {
-            prescaler: NonZeroU16::new(5).unwrap(),
-            seg1: NonZeroU8::new(7).unwrap(),
-            seg2: NonZeroU8::new(2).unwrap(),
-            sync_jump_width: NonZeroU8::new(1).unwrap(),
-        });
-    can.set_config(fd_cfg);
+
+    // let fd_cfg = can
+    //     .config()
+    //     .set_frame_transmit(can::config::FrameTransmissionConfig::ClassicCanOnly)
+    //     .set_non_iso_mode(false)
+    //     .set_edge_filtering(false)
+    //     .set_nominal_bit_timing(NominalBitTiming {
+    //         prescaler: NonZeroU16::new(5).unwrap(),
+    //         seg1: NonZeroU8::new(7).unwrap(),
+    //         seg2: NonZeroU8::new(2).unwrap(),
+    //         sync_jump_width: NonZeroU8::new(1).unwrap(),
+    //     });
+    // can.set_config(fd_cfg);
 
     let nominal = can.config().nbtr;
     let sample_point_permille = (1000 * (1 + nominal.seg1.get() as u16))
