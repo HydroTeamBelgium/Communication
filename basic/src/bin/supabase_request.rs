@@ -6,6 +6,7 @@ use panic_probe as _;
 
 use core::mem::MaybeUninit;
 
+use core::fmt::Write as _;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::{
@@ -20,6 +21,7 @@ use embassy_stm32::{
     rcc::*,
     rng::{InterruptHandler as RngInterruptHandler, Rng},
 };
+use heapless::String;
 use reqwless::{
     client::{HttpClient, TlsConfig},
     headers::ContentType,
@@ -97,7 +99,15 @@ async fn write_sensor_data(stack: Stack<'_>, tls_seed: u64) {
     let mut client = HttpClient::new_with_tls(&tcp, &dns, tls);
     let payload = br#"{"temperature":30.0,"humidity":80.0}"#;
     let mut response_buffer = [0u8; 1024];
-    let headers = [("apikey", SUPABASE_KEY), ("Prefer", "return=minimal")];
+    let mut authorization = String::<128>::new();
+    authorization
+        .write_fmt(format_args!("Bearer {}", SUPABASE_KEY))
+        .unwrap();
+    let headers = [
+        ("apikey", SUPABASE_KEY),
+        ("Authorization", authorization.as_str()),
+        ("Prefer", "return=minimal"),
+    ];
 
     let mut request = client
         .request(Method::POST, SUPABASE_ENDPOINT)
@@ -113,6 +123,10 @@ async fn write_sensor_data(stack: Stack<'_>, tls_seed: u64) {
         info!("Sensor data successfully sent to Supabase");
     } else {
         error!("Supabase returned HTTP {}", response.status.0);
+        let body = response.body().read_to_end().await.unwrap_or(&mut []);
+        if let Ok(message) = core::str::from_utf8(body) {
+            error!("Supabase response: {}", message);
+        }
     }
 }
 
