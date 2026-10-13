@@ -18,8 +18,8 @@ impl EcuType {
 
 /// Default ECU selection for each board role.
 /// Keep these centralized so the binaries do not carry hidden local policy.
-pub const NUCLEO_1_ECU_MODE: EcuType = EcuType::MaxxEcu;
-pub const NUCLEO_2_ECU_MODE: EcuType = EcuType::MaxxEcu;
+pub const NUCLEO_1_ECU_MODE: EcuType = EcuType::ScsDelta;
+pub const NUCLEO_2_ECU_MODE: EcuType = EcuType::ScsDelta;
 
 /// Centralized timing defaults for the ECU test setups.
 pub const SCS_TEST_FRAME_INTERVAL_MS: u64 = 250;
