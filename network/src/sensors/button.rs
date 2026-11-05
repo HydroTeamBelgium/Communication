@@ -2,7 +2,7 @@
 //!
 //! Provides button reading with debouncing and edge detection.
 
-use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::{exti::ExtiInput, mode::Async};
 use embassy_time::{Duration, Timer};
 use crate::protocol::Message;
 
@@ -68,7 +68,7 @@ impl ButtonDriver {
     }
     
     /// Wait for button press with debouncing, returns message to send
-    pub async fn wait_for_press(&self, button: &mut ExtiInput<'static>) -> Message {
+    pub async fn wait_for_press(&self, button: &mut ExtiInput<'static, Async>) -> Message {
         button.wait_for_rising_edge().await;
         
         // Debounce
@@ -80,7 +80,7 @@ impl ButtonDriver {
     }
     
     /// Wait for release (call after wait_for_press)
-    pub async fn wait_for_release(&self, button: &mut ExtiInput<'static>) {
+    pub async fn wait_for_release(&self, button: &mut ExtiInput<'static, Async>) {
         button.wait_for_falling_edge().await;
         
         // Debounce
@@ -90,7 +90,7 @@ impl ButtonDriver {
     }
     
     /// Full button cycle - returns message on press, waits for release
-    pub async fn wait_for_press_release(&self, button: &mut ExtiInput<'static>) -> Message {
+    pub async fn wait_for_press_release(&self, button: &mut ExtiInput<'static, Async>) -> Message {
         let msg = self.wait_for_press(button).await;
         self.wait_for_release(button).await;
         msg
@@ -107,7 +107,7 @@ impl ButtonDriver {
 macro_rules! button_task {
     ($name:ident, $channel:expr, $config:expr) => {
         #[embassy_executor::task]
-        async fn $name(mut button: ::embassy_stm32::exti::ExtiInput<'static>) -> ! {
+        async fn $name(mut button: ::embassy_stm32::exti::ExtiInput<'static, ::embassy_stm32::mode::Async>) -> ! {
             let driver = $crate::sensors::ButtonDriver::new($config);
             loop {
                 let msg = driver.wait_for_press(&mut button).await;
