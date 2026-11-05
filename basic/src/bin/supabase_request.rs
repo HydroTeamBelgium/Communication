@@ -78,7 +78,7 @@ type EthernetDevice = embassy_stm32::eth::Ethernet<
 
 #[embassy_executor::task]
 async fn net_task(mut runner: embassy_net::Runner<'static, EthernetDevice>) -> ! {
-    runner.run().await;
+    runner.run().await
 }
 
 async fn write_sensor_data(stack: Stack<'_>, tls_seed: u64) {
