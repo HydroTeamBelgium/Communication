@@ -15,8 +15,8 @@
 use defmt_rtt as _;
 use panic_probe as _;
 
-use basis::prelude::*;
-use basis::config::can::{
+use ::network::prelude::*;
+use ::network::config::can::{
     EcuType, MAXX_TEST_FRAME_INTERVAL_MS, NUCLEO_2_ECU_MODE, SCS_TEST_FRAME_INTERVAL_MS,
     TEST_DATA_FRAME_INTERVAL_MS,
 };
@@ -66,9 +66,9 @@ async fn main(spawner: Spawner) {
     // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
     let ecu_label = match NUCLEO_2_ECU_MODE {
-        basis::config::can::EcuType::ScsDelta => "ScsDelta",
-        basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
-        basis::config::can::EcuType::TestData => "TestData",
+        ::network::config::can::EcuType::ScsDelta => "ScsDelta",
+        ::network::config::can::EcuType::MaxxEcu => "MaxxEcu",
+        ::network::config::can::EcuType::TestData => "TestData",
     };
 
     let fd_cfg = can
@@ -90,7 +90,7 @@ async fn main(spawner: Spawner) {
     info!(
         "CAN debug: board=Nucleo2, ECU mode={}, bitrate={} bps, pins=PD0/PD1",
         ecu_label,
-        basis::hal::can::config::CAN_BITRATE_DEFAULT
+        ::network::hal::can::config::CAN_BITRATE_DEFAULT
     );
     info!(
         "CAN timing: prescaler={}, seg1={}, seg2={}, sjw={}, sample_point={} permille",
@@ -101,7 +101,7 @@ async fn main(spawner: Spawner) {
         sample_point_permille
     );
     let can = can.into_normal_mode();
-    info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
+    info!("CAN Configured at {} kbps", ::network::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
 
     // Spawn CAN writer task that cycles through the ECU-specific message set
     match spawner.spawn(can_send_all_messages(can)) {
@@ -130,7 +130,7 @@ async fn can_send_all_messages(
 }
 
 async fn send_scs_cycle(can: &mut embassy_stm32::can::Can<'static>) {
-    use basis::protocol::{ScsTestGenerator, SCS_MESSAGE_IDS};
+    use ::network::protocol::{ScsTestGenerator, SCS_MESSAGE_IDS};
 
     let mut generator = ScsTestGenerator::new();
     let mut msg_count = 0u32;
@@ -170,7 +170,7 @@ async fn send_scs_cycle(can: &mut embassy_stm32::can::Can<'static>) {
 }
 
 async fn send_maxx_cycle(can: &mut embassy_stm32::can::Can<'static>) {
-    use basis::protocol::{MaxxTestGenerator, MAXX_MESSAGE_IDS};
+    use ::network::protocol::{MaxxTestGenerator, MAXX_MESSAGE_IDS};
 
     let mut generator = MaxxTestGenerator::new();
     let mut msg_count = 0u32;
@@ -210,7 +210,7 @@ async fn send_maxx_cycle(can: &mut embassy_stm32::can::Can<'static>) {
 }
 
 async fn send_testdata_cycle(can: &mut embassy_stm32::can::Can<'static>) {
-    use basis::protocol::TestDataGenerator;
+    use ::network::protocol::TestDataGenerator;
 
     let mut generator = TestDataGenerator::new();
     let mut msg_count = 0u32;
