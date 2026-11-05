@@ -9,9 +9,11 @@ pub mod scs;
 pub mod scs_constants;
 pub mod ecu;
 pub mod maxx;
+pub mod test_data;
 
 pub use messages::*;
 pub use scs::*;
 pub use scs_constants::*;
 pub use ecu::*;
 pub use maxx::*;
+pub use test_data::*;

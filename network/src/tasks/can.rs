@@ -67,6 +67,7 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
     let ecu_label = match config.ecu_type {
         crate::config::can::EcuType::ScsDelta => "ScsDelta",
         crate::config::can::EcuType::MaxxEcu => "MaxxEcu",
+        crate::config::can::EcuType::TestData => "TestData"
     };
 
     info!(
@@ -202,6 +203,17 @@ pub async fn can_read_maxx_task_with_channel(
 ) {
     use crate::protocol::maxx::MAXX_PARSER;
     can_read_generic(&MAXX_PARSER, can, config, channel_tx).await;
+}
+
+/// CAN reader task for temperature/humidity test frames.
+#[embassy_executor::task]
+pub async fn can_read_testdata_task_with_channel(
+    can: Can<'static>,
+    config: CanConfig,
+    channel_tx: Sender<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, Message, 256>,
+) {
+    use crate::protocol::test_data::TEST_DATA_PARSER;
+    can_read_generic(&TEST_DATA_PARSER, can, config, channel_tx).await;
 }
 
 // ============================================================================

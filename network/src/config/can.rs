@@ -5,6 +5,7 @@
 pub enum EcuType {
     ScsDelta,
     MaxxEcu,
+    TestData,
 }
 
 impl EcuType {
@@ -12,18 +13,20 @@ impl EcuType {
         match self {
             Self::ScsDelta => 0x300,
             Self::MaxxEcu => 0x520,
+            Self::TestData => 0x100,
         }
     }
 }
 
 /// Default ECU selection for each board role.
 /// Keep these centralized so the binaries do not carry hidden local policy.
-pub const NUCLEO_1_ECU_MODE: EcuType = EcuType::ScsDelta;
-pub const NUCLEO_2_ECU_MODE: EcuType = EcuType::ScsDelta;
+pub const NUCLEO_1_ECU_MODE: EcuType = EcuType::TestData;
+pub const NUCLEO_2_ECU_MODE: EcuType = EcuType::TestData;
 
 /// Centralized timing defaults for the ECU test setups.
 pub const SCS_TEST_FRAME_INTERVAL_MS: u64 = 250;
 pub const MAXX_TEST_FRAME_INTERVAL_MS: u64 = 100;
+pub const TEST_DATA_FRAME_INTERVAL_MS: u64 = 1_000;
 pub const DEFAULT_CAN_RX_TIMEOUT_MS: u64 = 200;
 
 /// Configuration for CAN communication

@@ -16,7 +16,10 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use basis::prelude::*;
-use basis::config::can::{EcuType, NUCLEO_2_ECU_MODE};
+use basis::config::can::{
+    EcuType, MAXX_TEST_FRAME_INTERVAL_MS, NUCLEO_2_ECU_MODE, SCS_TEST_FRAME_INTERVAL_MS,
+    TEST_DATA_FRAME_INTERVAL_MS,
+};
 
 use embassy_stm32::{
     SharedData, 
@@ -65,6 +68,7 @@ async fn main(spawner: Spawner) {
     let ecu_label = match NUCLEO_2_ECU_MODE {
         basis::config::can::EcuType::ScsDelta => "ScsDelta",
         basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
+        basis::config::can::EcuType::TestData => "TestData",
     };
 
     let fd_cfg = can
@@ -121,6 +125,7 @@ async fn can_send_all_messages(
     match NUCLEO_2_ECU_MODE {
         EcuType::ScsDelta => send_scs_cycle(&mut can).await,
         EcuType::MaxxEcu => send_maxx_cycle(&mut can).await,
+        EcuType::TestData => send_testdata_cycle(&mut can).await,
     }
 }
 
@@ -201,5 +206,54 @@ async fn send_maxx_cycle(can: &mut embassy_stm32::can::Can<'static>) {
         }
 
         generator.next_cycle();
+    }
+}
+
+async fn send_testdata_cycle(can: &mut embassy_stm32::can::Can<'static>) {
+    use basis::protocol::TestDataGenerator;
+
+    let mut generator = TestDataGenerator::new();
+    let mut msg_count = 0u32;
+
+    info!(
+        "Starting temperature/humidity CAN test data on ID 0x100 every {} ms",
+        TEST_DATA_FRAME_INTERVAL_MS
+    );
+
+    loop {
+        let (can_id, frame_data) = generator.generate_frame();
+        let frame =
+            match embassy_stm32::can::frame::Frame::new_standard(can_id as u16, &frame_data) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    error!(
+                        "CAN TX: Failed to create test-data frame for ID 0x{:03X}: {}",
+                        can_id,
+                        defmt::Debug2Format(&error)
+                    );
+                    Timer::after_millis(TEST_DATA_FRAME_INTERVAL_MS).await;
+                    continue;
+                }
+            };
+
+        match can.write(&frame).await {
+            None => {
+                msg_count += 1;
+                trace!(
+                    "CAN TX: test data ID=0x{:03X}, temperature={} C, humidity={}%, counter={}",
+                    can_id,
+                    frame_data[0],
+                    frame_data[1],
+                    generator.counter()
+                );
+                if msg_count % 60 == 0 {
+                    info!("CAN test data: sent {} frames", msg_count);
+                }
+            }
+            Some(_) => warn!("CAN TX: Queue full for test-data ID 0x{:03X}", can_id),
+        }
+
+        generator.next_cycle();
+        Timer::after_millis(TEST_DATA_FRAME_INTERVAL_MS).await;
     }
 }

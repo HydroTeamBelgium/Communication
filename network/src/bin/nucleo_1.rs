@@ -18,7 +18,10 @@ use panic_probe as _;
 
 use basis::prelude::*;
 use basis::hal::create_net_config;
-use basis::tasks::can::{can_read_maxx_task_with_channel, can_read_scs_task_with_channel};
+use basis::tasks::can::{
+    can_read_maxx_task_with_channel, can_read_scs_task_with_channel,
+    can_read_testdata_task_with_channel,
+};
 use basis::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
@@ -85,6 +88,7 @@ async fn main(spawner: Spawner) {
     let ecu_label = match NUCLEO_1_ECU_MODE {
         basis::config::can::EcuType::ScsDelta => "ScsDelta",
         basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
+        basis::config::can::EcuType::TestData => "TestData",
     };
     can.set_bitrate(500_000);
 
@@ -170,6 +174,7 @@ async fn main(spawner: Spawner) {
     let spawn_result = match NUCLEO_1_ECU_MODE {
         basis::config::can::EcuType::ScsDelta => spawner.spawn(can_read_scs_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
         basis::config::can::EcuType::MaxxEcu => spawner.spawn(can_read_maxx_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
+        basis::config::can::EcuType::TestData => spawner.spawn(can_read_testdata_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
     };
 
     match spawn_result {
