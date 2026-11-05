@@ -23,9 +23,6 @@ struct BusErrorStats {
     bit_recessive: u32,
     bit_dominant: u32,
     software: u32,
-    bus_warning: u32,
-    bus_passive: u32,
-    bus_off: u32,
 }
 
 impl BusErrorStats {
@@ -37,9 +34,6 @@ impl BusErrorStats {
             + self.bit_recessive
             + self.bit_dominant
             + self.software
-            + self.bus_warning
-            + self.bus_passive
-            + self.bus_off
     }
 
     fn record(&mut self, err: &BusError) {
@@ -51,9 +45,6 @@ impl BusErrorStats {
             BusError::BitRecessive => self.bit_recessive += 1,
             BusError::BitDominant => self.bit_dominant += 1,
             BusError::Software => self.software += 1,
-            BusError::BusWarning => self.bus_warning += 1,
-            BusError::BusPassive => self.bus_passive += 1,
-            BusError::BusOff => self.bus_off += 1,
         }
     }
 }
@@ -140,27 +131,7 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
             embassy_futures::select::Either::First(Err(e)) => {
                 bus_error_stats.record(&e);
                 consecutive_bus_errors = consecutive_bus_errors.saturating_add(1);
-                match e {
-                    BusError::BusPassive => {
-                        if bus_error_stats.bus_passive % 50 == 1 {
-                            warn!(
-                                "CAN RX: BusPassive repeated (count={}). Controller is in Error Passive, but that does not only mean no ACK. If no valid frame has been seen yet, prioritize bitrate/clock mismatch, wrong bus, ECU power, transceiver, and termination checks.",
-                                bus_error_stats.bus_passive
-                            );
-                        }
-
-                        if bus_error_stats.bus_passive >= 500 && bus_error_stats.bus_passive % 500 == 1 {
-                            error!("CAN RX: ERROR PASSIVE RECOVERY ATTEMPT - Controller stuck in Error Passive ({}+ errors)", bus_error_stats.bus_passive);
-                            error!("CAN RX: Likely causes: (1) wrong bitrate or FDCAN kernel clock (2) ECU on another bus (3) ECU not powered (4) transceiver / wiring issue");
-                        }
-                    }
-                    BusError::BusOff => {
-                        error!("CAN RX: BusOff - controller disconnected from bus");
-                    }
-                    _ => {
-                        error!("CAN RX: Read failed: {}", defmt::Debug2Format(&e));
-                    }
-                }
+                error!("CAN RX: Read failed: {}", defmt::Debug2Format(&e));
                 stats.rx_errors += 1;
 
                 if !physical_hint_logged {
@@ -176,7 +147,7 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
 
                 if bus_error_stats.total() % 100 == 0 {
                     warn!(
-                        "CAN bus errors: total={}, form={}, stuff={}, crc={}, ack={}, bit0={}, bit1={}, warn={}, passive={}, off={}",
+                        "CAN bus errors: total={}, form={}, stuff={}, crc={}, ack={}, bit0={}, bit1={}",
                         bus_error_stats.total(),
                         bus_error_stats.form,
                         bus_error_stats.stuff,
@@ -184,9 +155,6 @@ pub async fn can_read_generic<P: crate::protocol::ecu::EcuParser + 'static>(
                         bus_error_stats.ack,
                         bus_error_stats.bit_recessive,
                         bus_error_stats.bit_dominant,
-                        bus_error_stats.bus_warning,
-                        bus_error_stats.bus_passive,
-                        bus_error_stats.bus_off,
                     );
                 }
 

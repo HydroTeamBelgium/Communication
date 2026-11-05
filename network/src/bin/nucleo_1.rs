@@ -127,10 +127,10 @@ async fn main(spawner: Spawner) {
     let device = Ethernet::new(
         PACKETS.init(PacketQueue::<8, 8>::new()),
         p.ETH, EthIrqs,
-        p.PA1, p.PA2, p.PC1, p.PA7,
-        p.PC4, p.PC5, p.PG13, p.PB13, p.PG11,
-        GenericPhy::new_auto(),
+        p.PA1, p.PA7, p.PC4, p.PC5,
+        p.PG13, p.PB13, p.PG11,
         THIS_BOARD.mac,
+        p.ETH_SMA, p.PA2, p.PC1,
     );
 
     // Setup network stack

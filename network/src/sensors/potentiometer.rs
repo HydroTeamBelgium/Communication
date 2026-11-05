@@ -2,7 +2,7 @@
 //!
 //! Provides voltage reading from ADC with calibration.
 
-use embassy_stm32::adc::Adc;
+use embassy_stm32::adc::{Adc, SampleTime};
 use embassy_stm32::peripherals;
 use embassy_stm32::Peri;
 use embassy_time::{Duration, Timer};
@@ -52,7 +52,7 @@ impl PotDriver {
         adc: &mut Adc<'static, peripherals::ADC2>,
         pin: &mut Peri<'static, peripherals::PA3>,
     ) -> u16 {
-        adc.blocking_read(pin)
+        adc.blocking_read(pin, SampleTime::CYCLES64_5)
     }
     
     /// Read with VREFINT calibration for accurate voltage
@@ -63,8 +63,8 @@ impl PotDriver {
         pin: &mut Peri<'static, peripherals::PA3>,
         vrefint_channel: &mut impl embassy_stm32::adc::AdcChannel<peripherals::ADC2>,
     ) -> PotReading {
-        let vrefint = adc.blocking_read(vrefint_channel);
-        let raw = adc.blocking_read(pin);
+        let vrefint = adc.blocking_read(vrefint_channel, SampleTime::CYCLES64_5);
+        let raw = adc.blocking_read(pin, SampleTime::CYCLES64_5);
         
         // Calculate VDDA from VREFINT
         let vdda = 3.3 * self.vrefint_cal as f32 / vrefint as f32;
@@ -82,7 +82,7 @@ impl PotDriver {
         adc: &mut Adc<'static, peripherals::ADC2>,
         pin: &mut Peri<'static, peripherals::PA3>,
     ) -> PotReading {
-        let raw = adc.blocking_read(pin);
+        let raw = adc.blocking_read(pin, SampleTime::CYCLES64_5);
         let voltage = (raw as f32 / 16383.0) * 3.3;
         PotReading::new(raw, voltage)
     }

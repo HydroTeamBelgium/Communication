@@ -30,7 +30,7 @@ use reqwless::{
 use static_cell::StaticCell;
 
 const SUPABASE_ENDPOINT: &str = "https://ctrbjkapatxjuogfewae.supabase.co/rest/v1/SensorData";
-const SUPABASE_KEY: &str = "sb_publishable_aNJfm7INlJE9qMvkMWLnIw_hOWNyYv7";
+const SUPABASE_KEY: &str = "sb_publishable_aNJfm7INlJE9qMvkMWLnIw_hOWNYvY7";
 
 const NETWORK_LOCAL_IP: Ipv4Address = Ipv4Address::new(192, 168, 0, 5);
 const MODEM_IP: Ipv4Address = Ipv4Address::new(192, 168, 0, 1);
