@@ -16,13 +16,13 @@
 use defmt_rtt as _;
 use panic_probe as _;
 
-use basis::prelude::*;
-use basis::hal::create_net_config;
-use basis::tasks::can::{
+use ::network::prelude::*;
+use ::network::hal::create_net_config;
+use ::network::tasks::can::{
     can_read_maxx_task_with_channel, can_read_scs_task_with_channel,
     can_read_testdata_task_with_channel,
 };
-use basis::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE};
+use ::network::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_stm32::{
@@ -86,9 +86,9 @@ async fn main(spawner: Spawner) {
     // Setup CAN with standard ECU parameters (see hal::can::config for constants)
     let mut can = can::CanConfigurator::new(p.FDCAN1, p.PD0, p.PD1, CanIrqs);
     let ecu_label = match NUCLEO_1_ECU_MODE {
-        basis::config::can::EcuType::ScsDelta => "ScsDelta",
-        basis::config::can::EcuType::MaxxEcu => "MaxxEcu",
-        basis::config::can::EcuType::TestData => "TestData",
+        ::network::config::can::EcuType::ScsDelta => "ScsDelta",
+        ::network::config::can::EcuType::MaxxEcu => "MaxxEcu",
+        ::network::config::can::EcuType::TestData => "TestData",
     };
     can.set_bitrate(500_000);
 
@@ -112,7 +112,7 @@ async fn main(spawner: Spawner) {
     info!(
         "CAN debug: board=Nucleo1, ECU mode={}, bitrate={} bps, rx_timeout={} ms, pins=PD0/PD1",
         ecu_label,
-        basis::hal::can::config::CAN_BITRATE_DEFAULT,
+        ::network::hal::can::config::CAN_BITRATE_DEFAULT,
         DEFAULT_CAN_RX_TIMEOUT_MS
     );
     info!(
@@ -125,7 +125,7 @@ async fn main(spawner: Spawner) {
     );
 
     let can = can.into_normal_mode();
-    info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
+    info!("CAN Configured at {} kbps", ::network::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
 
     // Setup Ethernet for UDP broadcast
     let device = Ethernet::new(
@@ -156,7 +156,7 @@ async fn main(spawner: Spawner) {
     // Create CAN configuration with centralized timeout settings.
     let can_config = CanConfig::new(
         NUCLEO_1_ECU_MODE,
-        basis::hal::can::config::CAN_BITRATE_DEFAULT,
+        ::network::hal::can::config::CAN_BITRATE_DEFAULT,
         0,
         DEFAULT_CAN_RX_TIMEOUT_MS,
     );
@@ -172,9 +172,9 @@ async fn main(spawner: Spawner) {
 
     // Spawn CAN reader task with ECU-specific parser selection
     let spawn_result = match NUCLEO_1_ECU_MODE {
-        basis::config::can::EcuType::ScsDelta => spawner.spawn(can_read_scs_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
-        basis::config::can::EcuType::MaxxEcu => spawner.spawn(can_read_maxx_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
-        basis::config::can::EcuType::TestData => spawner.spawn(can_read_testdata_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
+        ::network::config::can::EcuType::ScsDelta => spawner.spawn(can_read_scs_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
+        ::network::config::can::EcuType::MaxxEcu => spawner.spawn(can_read_maxx_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
+        ::network::config::can::EcuType::TestData => spawner.spawn(can_read_testdata_task_with_channel(can, can_config, CAN_CHANNEL.sender())),
     };
 
     match spawn_result {

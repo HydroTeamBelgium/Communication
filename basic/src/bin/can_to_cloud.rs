@@ -2,6 +2,7 @@
 #![no_main]
 
 use defmt_rtt as _;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use panic_probe as _;
 
 use core::mem::MaybeUninit;
@@ -18,13 +19,14 @@ use embassy_stm32::{
     Config, SharedData, bind_interrupts,
     eth::{self, Ethernet, PacketQueue},
     peripherals,
+    can,
     rcc::*,
     rng::{InterruptHandler as RngInterruptHandler, Rng},
 };
-use basis::prelude::*;
+use ::network::prelude::*;
 
-use basis::tasks::can::{can_read_maxx_task_with_channel, can_read_scs_task_with_channel};
-use basis::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS, NUCLEO_1_ECU_MODE};
+use ::network::tasks::can::{can_read_scs_task_with_channel};
+use ::network::config::can::{DEFAULT_CAN_RX_TIMEOUT_MS};
 
 use heapless::String;
 use reqwless::{
@@ -43,13 +45,21 @@ const MODEM_IP: Ipv4Address = Ipv4Address::new(192, 168, 0, 1);
 static PACKETS: StaticCell<PacketQueue<8, 2>> = StaticCell::new();
 static RESOURCES: StaticCell<StackResources<8>> = StaticCell::new();
 
+// Channel for CAN frames → UDP broadcast (size 256 to prevent frame loss)
+static CAN_CHANNEL: Channel<CriticalSectionRawMutex, Message, 256> = Channel::new();
+
+
 #[unsafe(link_section = ".ram_d3.shared_data")]
 static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 
 bind_interrupts!(struct Irqs {
     ETH => eth::InterruptHandler;
     HASH_RNG => RngInterruptHandler<peripherals::RNG>;
-    
+});
+
+bind_interrupts!(struct CanIrqs {
+    FDCAN1_IT0 => can::IT0InterruptHandler<peripherals::FDCAN1>;
+    FDCAN1_IT1 => can::IT1InterruptHandler<peripherals::FDCAN1>;
 });
 
 fn configure_clock(config: &mut Config) {
@@ -123,7 +133,7 @@ async fn write_sensor_data(
     loop {
         
         let msg = rx.receive().await;
-        info!("msg received is: " {:?}, msg);
+        info!("msg received is: {:?}", msg);
         let payload = br#"{"temperature":30.0,"humidity":80.0}"#;
 
         let mut request = client
@@ -153,7 +163,7 @@ async fn write_sensor_data(
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let mut config = Config::default();
-    configure_clock(&mut config);
+    configure_clock_full(&mut config);
     let p = embassy_stm32::init_primary(config, &SHARED_DATA);
 
 
@@ -168,7 +178,7 @@ async fn main(spawner: Spawner) {
     info!(
         "CAN debug: board=Nucleo1, ECU mode={}, bitrate={} bps, rx_timeout={} ms, pins=PD0/PD1",
         ecu_label,
-        basis::hal::can::config::CAN_BITRATE_DEFAULT,
+        ::network::hal::can::config::CAN_BITRATE_DEFAULT,
         DEFAULT_CAN_RX_TIMEOUT_MS
     );
     info!(
@@ -180,7 +190,15 @@ async fn main(spawner: Spawner) {
         sample_point_permille
     );
     let can = can.into_normal_mode();
-    info!("CAN Configured at {} kbps", basis::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
+    info!("CAN Configured at {} kbps", ::network::hal::can::config::CAN_BITRATE_DEFAULT / 1000);
+
+    // Create CAN configuration with centralized timeout settings.
+    let can_config = CanConfig::new(
+        NUCLEO_1_ECU_MODE,
+        ::network::hal::can::config::CAN_BITRATE_DEFAULT,
+        0,
+        DEFAULT_CAN_RX_TIMEOUT_MS,
+    );
 
 
     let mac_addr = [0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];

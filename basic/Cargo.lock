@@ -118,6 +118,7 @@ dependencies = [
  "grounded",
  "heapless 0.9.3",
  "micromath",
+ "network",
  "panic-probe",
  "rand_core 0.10.1",
  "reqwless",
@@ -1139,6 +1140,41 @@ name = "nb"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
+
+[[package]]
+name = "network"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cortex-m",
+ "cortex-m-rt",
+ "crc-any",
+ "critical-section",
+ "defmt 1.1.1",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-stm32",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embedded-can",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-io-async 0.7.0",
+ "embedded-nal-async",
+ "embedded-storage",
+ "grounded",
+ "heapless 0.9.3",
+ "micromath",
+ "panic-probe",
+ "rand_core 0.10.1",
+ "reqwless",
+ "rust-mqtt",
+ "static_cell",
+ "stm32-fmc",
+]
 
 [[package]]
 name = "nourl"
